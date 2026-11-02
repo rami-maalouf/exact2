@@ -1187,6 +1187,12 @@
         "items": { "type": "string", "minLength": 1 }
       }
     },
+    "before_build": {
+      "description": "A command, as argv, that prepares files the app's builds read and its repository does not hold, such as a script that fetches photos into a folder Git ignores (`[\"sh\", \"scripts/fetch-images.sh\"]`). The exact.mjs `exact new` generates runs it in the app's directory, with EXACT_APP_DIR and EXACT2 set, no input and its output on stderr, before each of its commands that builds or compiles the app, or may: every one but those that read none of the app's files but its sources (docs, feedback, game, and contract vocab, fmt, sources and migrate), and test or agent only where they build first. A failure stops the command. It runs that often, so it should finish at once when what it prepares is there.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "server": {
       "type": "object",
       "description": "The app's own server, started for tests, verification and agent drives.",

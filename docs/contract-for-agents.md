@@ -92,6 +92,12 @@ In an app made by `exact new`, run its own `exact.mjs` from the app's directory.
 `bun exact.mjs update` regenerates that file, so the app's own verbs go in
 `app.json`'s `commands` (`"seed": ["bun", "seed.mjs"]` is `bun exact.mjs seed
 web`, run in the app's directory), which it reads and update leaves alone.
+A command that prepares files a build reads but the app's repository does not
+hold, such as a script that fetches photos into a folder Git ignores, goes in
+`app.json`'s `before_build` (`["sh", "scripts/fetch-images.sh"]`): every
+command that builds or compiles the app, or may, runs it first in the app's
+directory, and stops if it fails. Make it finish at once when the files are
+there.
 Its `contract` verb is exact2's compiler, with paths relative to where you run it:
 
 ```sh

@@ -120,7 +120,8 @@ export async function run({ dir, name, game = false, exact2, args }) {
   // `commands`, each a command as argv (`"seed": ["bun", "seed.mjs"]`), run in the app's directory with the
   // arguments after the verb. A game's app.json is optional.
   const manifest = resolve(dir, 'app.json');
-  const own = (existsSync(manifest) ? JSON.parse(readFileSync(manifest, 'utf8')).commands : null) ?? {};
+  const declared = existsSync(manifest) ? JSON.parse(readFileSync(manifest, 'utf8')) : {};
+  const own = declared.commands ?? {};
   const clash = Object.keys(own).find((name) => verbs[name]);
   if (clash) {
     console.error(`app.json commands.${clash}: ${clash} is one of exact.mjs's own verbs; give the app's another name`);
@@ -151,6 +152,7 @@ export async function run({ dir, name, game = false, exact2, args }) {
   // checkout without it).
   const feedback = verb === 'feedback' ? null : await import(resolve(exact2, 'scripts/feedback-note.mjs')).catch(() => null);
   let interrupted = false;
+  let stopped = null; // the first signal passed on to a child
   const started = Date.now();
   // The diary's command log (exact2's docs/diary.md): which exact2, what ran, how it ended. No arguments.
   const log = (exit) => { if (verb !== 'feedback') try {
@@ -184,7 +186,7 @@ export async function run({ dir, name, game = false, exact2, args }) {
       env: { ...process.env, HERMES_LEAN_SYS_OFFLINE: '1', EXACT_APP_DIR: dir, EXACT2: exact2, EXACT_LAUNCHER_PID: String(process.pid) },
     });
     piped(child);
-    const pass = (signal) => { interrupted = true; child.kill(signal); }, signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+    const pass = (signal) => { interrupted = true; stopped ??= signal; child.kill(signal); }, signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
     for (const signal of signals) process.on(signal, pass);
     child.on('error', () => done(1));
     child.on('exit', (code, signal) => {
@@ -195,6 +197,21 @@ export async function run({ dir, name, game = false, exact2, args }) {
     });
   });
   const script = ([file, ...args], more = [], stdio = 'inherit') => spawned(process.execPath, [resolve(exact2, file), ...args, ...more], stdio);
+  // app.json's `before_build`, before a command that builds: with no input and its output on stderr, so a drive's
+  // stdout stays its reply. A signal passed to it stops the command even if it then exits 0.
+  const prepare = async () => {
+    const before = declared.before_build;
+    if (before === undefined) return 0;
+    if (!(Array.isArray(before) && before.length && before.every((part) => typeof part === 'string' && part))) {
+      console.error(`app.json before_build is ${JSON.stringify(before)}; it must be a command as argv, such as ["sh", "scripts/fetch-images.sh"], so ${verb} did not run`);
+      return 2;
+    }
+    const [command, ...args] = before;
+    const code = await spawned(command === 'bun' ? process.execPath : command, args, ['ignore', 2, 2], dir);
+    if (stopped) return code || 128 + (constants.signals[stopped] ?? 0);
+    if (code) console.error(`app.json before_build ${JSON.stringify(before)} exited ${code} in ${dir}, so ${verb} did not run`);
+    return code;
+  };
 // exact.mjs runs from any directory, and a file argument is found where you are, else in the app: `app.contract`
 // from the app's parent, `app/app.contract` from inside it (app farm wave 1: 13 builds ran one or the other). Each
 // file found in the app is said, with the app's directory; one found nowhere is named before the command runs.
@@ -258,6 +275,8 @@ if (verb === 'contract') {
     // A server entry that does not read DB is refused before the build too, not after it (verify.mjs `withAppServer`, LLP 1116.008 D1).
     const refusal = verb === 'test' ? (await import(resolve(exact2, 'scripts/verify.mjs'))).appServer(dir)?.refusal : null;
     if (refusal) { console.error(`test: ${refusal}`); return log(1); }
+    const prepared = await prepare();
+    if (prepared) return log(prepared);
     // An `agent` drive's check hashes the build's inputs, and the driver need not again (LLP 1012.001.000 D1: once a drive).
     const checked = verb === 'agent' && drivesNative ? resolve(tmpdir(), `exact-build-check-${process.pid}`) : null;
     if (checked) process.env.EXACT_BUILD_CHECK_OUT = checked;
@@ -266,6 +285,24 @@ if (verb === 'contract') {
       : await script(['scripts/agent-build.mjs', host, '--app', name], [], [0, 2, 2]);
     if (checked) { delete process.env.EXACT_BUILD_CHECK_OUT; try { process.env.EXACT_BUILD_CHECKED = readFileSync(checked, 'utf8'); rmSync(checked); } catch {} }
     if (built) return log(built);
+  }
+  // Every exact.mjs verb prepares first except those that read none of the app's files but its sources (the guides, the
+  // diary, a game's vocabulary, the Contract's vocabulary, formatter and source list): the others compile the app or
+  // may (a host's build or dev loop, serve, verify, a game's compile or shells, the Contract and Tamber commands that
+  // admit the app, whose compile reads declared sounds and icons), or regenerate what a build reads. A missed verb
+  // breaks a build; an extra run costs a check that finds the files there. A drive prepares above, when it builds
+  // first. Only exact.mjs's own verbs count: an app's own command may take a name another kind of app's verbs use (a
+  // game's check, an app's verify). A flag the build's script refuses is refused here first, as that script would, so
+  // a refusal comes before any work.
+  const sourcesOnly = ['test', 'agent', 'docs', 'feedback', 'game'].includes(verb)
+    || verb === 'contract' && ['vocab', 'fmt', 'sources', 'migrate'].includes(rest[0]);
+  if (declared.before_build !== undefined && verbs[verb] && !sourcesOnly) {
+    if (['web', 'web-build', 'serve', 'verify', 'ios', 'mac', 'linux', 'android', 'update', 'snapback', 'hatch', 'pattern'].includes(verb)) {
+      const refused = (await import(resolve(exact2, 'scripts/help.mjs')).catch(() => null))?.guardFlags(verb, rest, { exit: (code) => ({ code }) });
+      if (refused?.code != null) return log(refused.code);
+    }
+    const prepared = await prepare();
+    if (prepared) return log(prepared);
   }
   if (verb === 'contract' && rest[0] === 'build' && existsSync(manifest) && existsSync(resolve(exact2, 'snapback4/web/device-build.mjs'))) {
     const app = { dir, manifest: JSON.parse(readFileSync(manifest, 'utf8')) };
