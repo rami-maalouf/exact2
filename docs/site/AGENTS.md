@@ -27,3 +27,10 @@ command confused you, record it: `bun exact.mjs feedback note "<what happened>"`
 exact2's commit and the last exit code, never output or code. `bun exact.mjs feedback status` says
 whether notes are sent and whether to keep a diary; under `never`, skip all of this.
 <!-- exact:end -->
+
+## Preview the completed site
+
+Run `bun run build`, then `bun run start`. Start serves the completed build with
+`--no-rebuild`, preserving the Markdown and SEO output from postbuild. After a
+source edit, run the full `bun run build` pipeline again and reload. Keep build
+and serve settings consistent; a mismatch is refused.

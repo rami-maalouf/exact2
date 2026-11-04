@@ -1263,7 +1263,8 @@ async function main() {
   const named = argv.filter((a) => !a.startsWith('--'));
   if (named.length > 1 || origin && named.length) { console.error(`serve: one directory, a build or a published --origin, not ${[...named, origin].filter(Boolean).join(' and ')}`); return 2; }
   const dist = resolve(origin ?? named[0] ?? webDist());
-  const settled = settleBuild(dist);
+  const rebuildEnabled = !argv.includes('--no-rebuild');
+  const settled = settleBuild(dist, rebuildEnabled);
   if (settled) return settled;
   // A JS-target build (LLP 1071) is served as its tree. A published root is its pointer's release, whose page is the
   // JS target's or the wasm's.
@@ -1279,7 +1280,6 @@ async function main() {
     console.error(why ? `${dist}/app.wasm is built but could not be read: ${why}` : `no build in ${dist}: run ${build} first, or serve a published --origin <dir>`);
     return 2;
   }
-  // TODO(LLP 1153 D4): compare each setting app.json declares with the value the build inlined before serving.
   const loopback = !argv.includes('--lan') && (argv.includes('--loopback') || process.env.EXACT_LOOPBACK === '1');
   // `--port`, else `PORT`, which a host sets for `npm start` (LLP 1153.001 D3), else 8765.
   const portText = portFlag ?? process.env.PORT ?? null;
@@ -1289,11 +1289,11 @@ async function main() {
   const compression = compressionCache();
   const warming = warmCompression(dist, compression, js);
   const pages = js ? sitePages(dist, await import('../web-js/render.mjs')) : null;
-  const rebuild = rebuildOnChange(dist);
+  const rebuild = rebuildOnChange(dist, rebuildEnabled);
   const server = createServer(async (req, res) => {
     if (rebuild && asksPage(req, webRequestURL(req.url)?.pathname)) {
       const failed = await rebuild();
-      if (failed) { res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }); res.end(`The app's build failed, so this is the last build's page no more:\n\n${failed.slice(-6000)}`); return; }
+      if (failed) { res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }); res.end(`${rebuildEnabled ? "The app's build failed, so this is the last build's page no more:" : "The completed build cannot be served:"}\n\n${failed.slice(-6000)}`); return; }
     }
     return js ? serveBuildTree(dist, req, res, { pages, compression }) : serveStatic(dist, req, res, {host,port}, compression);
   });
@@ -1308,7 +1308,8 @@ async function main() {
     let served = '';
     try { const { app } = JSON.parse(readFileSync(resolve(dist, js ? '.exact-build.json' : 'exact.json'), 'utf8')); served = ` ${app.name} (${app.id})${js ? ', the JS target' : ''}`; } catch { /* an older build has no envelope */ }
     console.log(urls.join('\n') + `\n  (serving${served} from ${dist}; ctrl-c to stop)`);
-    if (rebuild) console.log('  (an edit to the app builds it again before the next page: leave this running and reload)');
+    if (!rebuildEnabled) console.log("  (automatic rebuilding disabled: run the app's full build command after edits)");
+    else if (rebuild) console.log('  (an edit to the app builds it again before the next page: leave this running and reload)');
     warming.then(n => console.log(`  (${n} files compressed: brotli and gzip)`));
     let rendered = [];
     try { rendered = JSON.parse(readFileSync(resolve(dist, 'routes.json'), 'utf8')).routes.filter((r) => r.render === 'request' || r.render === 'cached'); } catch { /* no route table */ }
@@ -1321,7 +1322,7 @@ async function main() {
  * environment or the app's files now give another value is built again when the app's sources are beside the build,
  * and refused, naming the setting and both values, when they are not (a build copied elsewhere). 0 when it may be
  * served, else the exit code. */
-function settleBuild(dist) {
+function settleBuild(dist, rebuildEnabled = true) {
   let marker;
   try { marker = JSON.parse(readFileSync(resolve(dist, '.exact-build.json'), 'utf8')); } catch { return 0; }
   if (!marker.env) return 0;
@@ -1329,6 +1330,10 @@ function settleBuild(dist) {
   if (!changed.length) return 0;
   const said = (s) => (s ? `${JSON.stringify(s.value)} (${s.source})` : 'unset');
   const what = changed.map(({ name, built, now }) => `import.meta.env.${name} was built as ${said(built)} and is ${said(now)} here`).join('; ');
+  if (!rebuildEnabled) {
+    console.error(`${dist}: ${what}; --no-rebuild disables automatic rebuilding: run the app's full build with these settings, or serve it with the settings it was built with`);
+    return 2;
+  }
   if (!app) {
     console.error(`${dist}: ${what}, and the app's sources are not beside this build to build it again: build it with these settings (bun exact.mjs web-build), or serve it with the ones it was built with`);
     return 2;
@@ -1349,15 +1354,14 @@ function settleBuild(dist) {
   return built.status === 0 ? 0 : built.status ?? 1;
 }
 
-/** For a build whose app's sources are beside it, as `settleBuild` builds a changed setting again: a function a
- * request for a page awaits (`asksPage`), which builds the site again once a source changed since the build (newer than its
- * receipt), as a framework's dev server does, or once another build with other settings replaced it (a test run's,
- * for its own API), and answers the build's output when it failed (null when it built or nothing changed). Null for a build without its sources (a site copied to a host), which is served as it is. */
-function rebuildOnChange(dist) {
+/** page requests validate replacement settings even for copied --no-rebuild previews. automatic rebuilding
+ * needs adjacent sources and a compatible output directory; an edit or mismatched setting rebuilds before
+ * serving. the hook answers failure text, or null when the completed build can be served. */
+function rebuildOnChange(dist, rebuildEnabled = true) {
   let marker;
   try { marker = JSON.parse(readFileSync(resolve(dist, '.exact-build.json'), 'utf8')); } catch { return null; }
   const app = sourcesOf(dist, marker.app?.id);
-  if (!app || (!marker.release && resolve(dist) !== webDist())) return null;
+  if (rebuildEnabled && (!app || (!marker.release && resolve(dist) !== webDist()))) return null;
   const out = resolve(dist), receipt = () => { try { return statSync(resolve(dist, '.exact-build.json')).mtimeMs; } catch { return 0; } };
   // What a build reads: the app's files, but for what builds and tools write (its outputs, dependencies, dot
   // directories but `.env`s, generated types, test reports).
@@ -1375,11 +1379,12 @@ function rebuildOnChange(dist) {
   const target = marker.target === 'js' ? [] : ['--wasm'], release = marker.release ? ['--out', dist] : [];
   return () => {
     if (running) return running;
-    if (Date.now() - checked < 300) return null;
+    if (rebuildEnabled && Date.now() - checked < 300) return null;
     checked = Date.now();
     let settings = [];
     try { settings = settingChanges(JSON.parse(readFileSync(resolve(dist, '.exact-build.json'), 'utf8')).env ?? {}, process.env, app); } catch { /* being replaced */ }
-    if (!settings.length && newest(app) <= Math.max(since, receipt())) return null;
+    if (!settings.length && (!rebuildEnabled || newest(app) <= Math.max(since, receipt()))) return null;
+    if (!rebuildEnabled) return `--no-rebuild: the completed build has different settings (${settings.map(({ name, built, now }) => `${name}: built ${JSON.stringify(built?.value)}, current ${JSON.stringify(now?.value)}`).join("; ")}); run the app's full build with this server's settings, or restart serve with the build's settings.`;
     const started = Date.now();
     console.log(`${app}: ${settings.length ? `the build has other settings than this server (${settings.map((c) => c.name).join(', ')})` : 'a source changed since the build'}: building it again`);
     running = new Promise((done) => {
