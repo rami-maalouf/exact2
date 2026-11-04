@@ -13,6 +13,60 @@ import XCTest
 ///   bun host/apple/build.mjs --test --ios
 final class RowCellsIOSTests: XCTestCase {
     private var window: UIWindow!
+    private final class PointTouch: UITouch {
+        var point: CGPoint
+        let target: UIView
+        init(_ point: CGPoint, on target: UIView) { self.point = point; self.target = target; super.init() }
+        override var view: UIView? { target }
+        override func location(in view: UIView?) -> CGPoint { view.map { $0.convert(point, from: nil) } ?? point }
+    }
+
+    func testDraggingAcrossARowDoesNotActivateItOnLiftOrAfterReversing() throws {
+        let p = try fixture()
+        let row = try XCTUnwrap(p.views[11])
+        var pressed: [UInt32] = []
+        p.onPress = { pressed.append($0) }
+        for (start, end, reverse) in [(90.0, 310.0, false), (310.0, 90.0, false), (90.0, 310.0, true)] {
+            let touch = PointTouch(row.convert(CGPoint(x: start, y: 22), to: nil), on: row)
+            row.touchesBegan([touch], with: nil)
+            touch.point = row.convert(CGPoint(x: end, y: 22), to: nil)
+            row.touchesMoved([touch], with: nil)
+            if reverse {
+                touch.point = row.convert(CGPoint(x: start, y: 22), to: nil)
+                row.touchesMoved([touch], with: nil)
+            }
+            row.touchesEnded([touch], with: nil)
+        }
+        XCTAssertEqual(pressed, [], "a horizontal row drag is not a tap even when no scroll recognizer takes it")
+        let tap = PointTouch(row.convert(CGPoint(x: 90, y: 22), to: nil), on: row)
+        row.touchesBegan([tap], with: nil)
+        tap.point.x += 2
+        row.touchesMoved([tap], with: nil)
+        row.touchesEnded([tap], with: nil)
+        XCTAssertEqual(pressed, [11], "a later tap with slight finger movement still activates once")
+    }
+
+    func testAButtonInsideARowKeepsDragOutAndBackTracking() throws {
+        let p = try fixture()
+        p.apply(wireBatch([
+            ["op": "create", "id": 41, "kind": "button", "handlers": ["press"]],
+            ["op": "children", "id": 11, "ids": [21, 41]],
+            ["op": "frame", "id": 41, "x": 300.0, "y": 0.0, "w": 80.0, "h": 44.0],
+        ]))
+        let button = try XCTUnwrap(p.views[41])
+        var pressed: [UInt32] = []
+        p.onPress = { pressed.append($0) }
+        let touch = PointTouch(button.convert(CGPoint(x: 40, y: 22), to: nil), on: button)
+        let origin = touch.point
+        button.touchesBegan([touch], with: nil)
+        touch.point.x -= 120
+        button.touchesMoved([touch], with: nil)
+        touch.point = origin
+        button.touchesMoved([touch], with: nil)
+        button.touchesEnded([touch], with: nil)
+        XCTAssertEqual(pressed, [41], "the embedded button keeps tracking and does not press its row")
+    }
+
     func testTheRowOwnedSeparatorFollowsPresentationWithoutABatchRedraw() throws {
         let p = try fixture()
         let (row, line) = try XCTUnwrap(rowLines(p).first)

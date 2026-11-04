@@ -276,6 +276,7 @@ final class PressContact {
     var responderUsesCanvas = false
     /// Whether this contact’s down was taken here rather than forwarded.
     var ownsPress = false
+    var rowPressOrigin: CGPoint?
     var cancelled = false
     var cancelledByReparenting = false
     /// A handlerless custom invoker's look, independent of the forwarded press: nil when it owns none.
@@ -354,6 +355,14 @@ extension NodeView {
         } else if disabled || (contact.bubbled ? authoredInert : inert) { cancelPressContact() }
         return contact.cancelled ? nil : contact
     }
+    private func cancelDraggedRowPress(_ contact: PressContact) -> Bool {
+        guard let origin = contact.rowPressOrigin, let touch = contact.touch else { return false }
+        let point = touch.location(in: nil)
+        guard max(abs(point.x - origin.x), abs(point.y - origin.y)) > CGFloat(Gesture.slop) else { return false }
+        // a row drag stays cancelled after reversal, even when no scroller takes it.
+        cancelPressContact()
+        return true
+    }
     /// Retirement, reparenting and disable cancel the old chain while its
     /// identities are still available. A late terminal callback cannot clear
     /// a new contact or a new incarnation's feedback.
@@ -423,6 +432,7 @@ extension NodeView {
         if handlers.contains("press") || defaultLink != nil || presenter?.menus.closesPresentedContent(self) == true
             || contact.bubbled && isNativeButton && presenter?.invocation(of: self) != nil {
             contact.ownsPress = true
+            if isRowPress { contact.rowPressOrigin = touch.location(in: nil) }
             pressed = true
         } else {
             if !isNativeButton, presenter?.showsPopoverPress(of: self) == true {
@@ -442,6 +452,7 @@ extension NodeView {
     package override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         if canvasTouches(touches, phase: "move", event: event) { return }
         guard let contact = currentPressContact(touches) else { return }
+        if cancelDraggedRowPress(contact) { return }
         inlinePressed = nil; linkPressed = nil
         if contact.invokerLook != nil { setInvokerLook(contact, touches.first.map(pressLands) ?? false) }
         if contact.ownsPress { pressFollows(inside: overlayHoldsPress || (touches.first.map(pressLands) ?? false)) } else { contact.destination?.touchesMoved(touches, with: event) }
@@ -449,6 +460,7 @@ extension NodeView {
     package override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         if canvasTouches(touches, phase: "up", event: event) { return }
         guard let contact = currentPressContact(touches) else { return }
+        if cancelDraggedRowPress(contact) { return }
         // Its press may have removed the overlay that held the look with it,
         // which left the look to this contact: the look is the overlay's alone now.
         defer {

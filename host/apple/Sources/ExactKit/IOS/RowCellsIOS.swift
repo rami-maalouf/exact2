@@ -78,6 +78,7 @@ extension NodeView {
         }
         return find(root)
     }
+    var isRowPress: Bool { rowCell?.row.rowPress === self }
     /// Whether the row's author gave it a ground of its own, on the row or
     /// on anything from what it presses up to it: the cell's ground would
     /// lie under it, unseen, so such a row is its author's card, and its
