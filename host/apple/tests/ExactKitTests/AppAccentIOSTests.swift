@@ -39,6 +39,79 @@ final class AppAccentIOSTests: XCTestCase {
         XCTAssertNotEqual(rgb(window.tintColor), [0, 122, 255], "a root with no accent gives the window its own back")
     }
 
+    func testAReparentedRootStillUpdatesTheWindowAccent() throws {
+        let p = presenter(view(1) + [["op": "roots", "ids": [1]]])
+        let root = try XCTUnwrap(p.views[1])
+        let route = UIViewController()
+        window.addSubview(route.view)
+        route.view.addSubview(root)
+        XCTAssertFalse(root.superview === p.root, "navigation can move the logical root into a route controller")
+        p.apply(wireBatch([["op": "style", "id": 1, "style": ["accent_color": red]]]))
+        XCTAssertEqual(rgb(window.tintColor), [232, 28, 36], "a reactive accent loaded after route attachment reaches the window")
+        p.apply(wireBatch([["op": "style", "id": 1, "style": ["accent_color": [0, 122, 255, 255]]]]))
+        XCTAssertEqual(rgb(window.tintColor), [0, 122, 255], "a mounted palette change reaches the window")
+        p.apply(wireBatch([["op": "style", "id": 1, "style": ["accent_color": "auto"]]]))
+        XCTAssertEqual(rgb(window.tintColor), rgb(UIWindow().tintColor), "reset restores the platform tint")
+    }
+
+    func testAReplacedRootCannotRetakeTheWindowAccentAfterReparenting() throws {
+        let p = presenter(view(1, style: ["accent_color": red]) + [["op": "roots", "ids": [1]]])
+        let old = try XCTUnwrap(p.views[1])
+        let route = UIViewController()
+        window.addSubview(route.view)
+        route.view.addSubview(old)
+        p.apply(wireBatch(view(2, style: ["accent_color": [0, 122, 255, 255]]) + [["op": "roots", "ids": [2]]]))
+        p.apply(wireBatch([["op": "style", "id": 1, "style": ["accent_color": [0, 255, 0, 255]]]]))
+        XCTAssertEqual(rgb(window.tintColor), [0, 122, 255], "a retained old route no longer owns the app accent")
+        p.reset()
+        XCTAssertEqual(rgb(window.tintColor), rgb(UIWindow().tintColor), "session reset releases the window accent")
+    }
+
+    func testAColdProminentBarInheritsALateRootAccentWithoutATraitChange() throws {
+        guard #available(iOS 26.0, *) else { throw XCTSkip("prominent native bar style requires iOS 26") }
+        let page = UIViewController()
+        let bar = UIBarButtonItem(title: "Continue", style: .prominent, target: nil, action: nil)
+        page.navigationItem.rightBarButtonItem = bar
+        let nav = UINavigationController(rootViewController: page)
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        window.overrideUserInterfaceStyle = .light
+        window.tintColor = .systemBlue
+        window.rootViewController = nav
+        window.makeKeyAndVisible()
+        self.window = window
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let p = Presenter()
+        p.viewport.frame = page.view.bounds
+        page.view.addSubview(p.viewport)
+        p.apply(wireBatch(view(1) + [["op": "roots", "ids": [1]]]))
+        let root = try XCTUnwrap(p.views[1])
+        page.view.addSubview(root)
+        nav.view.layoutIfNeeded()
+        XCTAssertNil(bar.tintColor, "the prominent fill inherits the window, not authored text color")
+        XCTAssertTrue(nav.navigationBar.window === p.viewport.window, "the active bar and accent owner share the window")
+        let yellow: [[Double]] = [[128, 102, 0, 255], [255, 204, 0, 255]]
+        p.apply(wireBatch([["op": "style", "id": 1, "style": ["accent_color": yellow]]]))
+        let decoded = try XCTUnwrap(root.style["accent_color"])
+        XCTAssertEqual(decoded.channels(dark: false), yellow[0], "the fixture carries the compiler's light/dark color shape")
+        XCTAssertEqual(decoded.channels(dark: true), yellow[1])
+        _ = try XCTUnwrap(decoded.cgColor(dark: false))
+        _ = try XCTUnwrap(decoded.cgColor(dark: true))
+        nav.view.layoutIfNeeded()
+        XCTAssertEqual(rgb(window.tintColor), [128, 102, 0], "late persisted palette reaches the cold light window")
+        XCTAssertEqual(rgb(nav.navigationBar.tintColor), [128, 102, 0], "the displayed bar inherits it before any dark-mode switch")
+        XCTAssertTrue(page.navigationItem.rightBarButtonItem === bar, "updating tint does not reconstruct the item")
+        window.overrideUserInterfaceStyle = .dark
+        nav.view.layoutIfNeeded()
+        let dark = UITraitCollection(userInterfaceStyle: .dark)
+        XCTAssertEqual(rgb(nav.navigationBar.tintColor.resolvedColor(with: dark)), [255, 204, 0])
+        window.overrideUserInterfaceStyle = .light
+        nav.view.layoutIfNeeded()
+        XCTAssertEqual(rgb(nav.navigationBar.tintColor), [128, 102, 0], "returning to light does not retain a stale native tint")
+        p.reset()
+    }
+
     func testAccentColorAsTheTintLeavesTheWindowAlone() {
         let before = rgb(UIWindow().tintColor)
         _ = presenter(view(1, style: ["accent_color": ["sys": "@tint", "c": [[0, 122, 255, 255], [10, 132, 255, 255]]]]) + [["op": "roots", "ids": [1]]])
@@ -280,7 +353,12 @@ final class AppAccentIOSTests: XCTestCase {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(view)
         var reports: [Bool] = []
-        session.runtime.observeBatch = { _, _ in reports.append(session.presenter.views[9001]?.layer.bounds.width == 123) }
+        session.runtime.observeBatch = { _, _ in
+            Owner.shared.callMain {
+                XCTAssertTrue(Thread.isMainThread)
+                reports.append(session.presenter.views[9001]?.layer.bounds.width == 123)
+            }
+        }
         defer { session.runtime.observeBatch = nil }
         session.apply(wireBatch([
             ["op": "create", "id": 9001, "kind": "view", "props": [:], "handlers": [], "style": ["accent_color": [255, 59, 48, 255]]],

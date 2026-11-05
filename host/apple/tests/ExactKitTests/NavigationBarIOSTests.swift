@@ -1423,6 +1423,409 @@ final class NavigationBarIOSTests: XCTestCase {
         XCTAssertEqual(owner.convert(owner.bounds, to: nil), frame)
     }
 
+    private func prominentFixture(_ label: String, requiresCapsule: Bool = true) throws -> (ExactSession, NodeView, RouteController, UIBarButtonItem) {
+        if requiresCapsule {
+            guard #available(iOS 26.0, *) else { throw XCTSkip("native prominent capsule requires iOS 26") }
+        }
+        let session = try fixture(label, module: false)
+        let p = session.presenter
+        let header = try node(session, "header-home")
+        let prior = p.buttonFace
+        p.buttonFace = { id in
+            if id != 900001 { return prior?(id) ?? ButtonFace() }
+            var face = ButtonFace()
+            face.title = "Continue"
+            face.style = "filled"
+            face.rows.title = ["font_size": .number(17)]
+            return face
+        }
+        let children = header.container.subviews.compactMap { ($0 as? NodeView)?.id }
+        p.apply(wireBatch([
+            ["op": "create", "id": 900001, "kind": "control", "props": ["type": "button", "testId": "prominent-proof"], "handlers": ["press"],
+             "style": ["text_color": [[255, 255, 255, 255], [0, 0, 0, 255]], "written": ["text_color"]]],
+            ["op": "children", "id": Int(header.id), "ids": children + [900001]]
+        ]))
+        let route = try XCTUnwrap(p.navigation.primaryNavigation?.topViewController as? RouteController)
+        let item = try XCTUnwrap(route.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier == "prominent-proof" })
+        let root = try XCTUnwrap(p.navigation.container)
+        XCTAssertTrue(HeaderShape.Item(try XCTUnwrap(p.views[900001])).prominent)
+        return (session, root, route, item)
+    }
+
+    func testAuthoredProminentColorsRespectNativeStyleAvailability() throws {
+        let (session, root, _, item) = try prominentFixture("prominent-platform-fallback", requiresCapsule: false)
+        session.presenter.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": [128, 102, 0, 255]]]]))
+        if #available(iOS 26.0, *) {
+            XCTAssertEqual(item.style, .prominent)
+            XCTAssertEqual(try tintRGB(item.tintColor), [128, 102, 0])
+            XCTAssertEqual(try tintRGB(item.titleTextAttributes(for: .normal)?[.foregroundColor] as? UIColor), [255, 255, 255])
+        } else {
+            XCTAssertEqual(item.style, .plain)
+            XCTAssertNil(item.tintColor, "pre-26 fallback keeps inherited tint")
+            for state: UIControl.State in [.normal, .highlighted, .disabled, .selected, .focused] {
+                XCTAssertNil(item.titleTextAttributes(for: state)?[.foregroundColor], "no capsule ink on an unfilled item")
+            }
+            session.presenter.navigation.refreshProminentTints()
+            XCTAssertNil(item.tintColor, "refresh preserves pre-26 fallback")
+        }
+        XCTAssertEqual((item.titleTextAttributes(for: .normal)?[.font] as? UIFont)?.pointSize, 17)
+    }
+
+    private func tintRGB(_ color: UIColor?, _ style: UIUserInterfaceStyle = .light, file: StaticString = #filePath, line: UInt = #line) throws -> [Int] {
+        let color = try XCTUnwrap(color, file: file, line: line).resolvedColor(with: UITraitCollection(userInterfaceStyle: style))
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        XCTAssertTrue(color.getRed(&r, green: &g, blue: &b, alpha: &a), file: file, line: line)
+        return [r, g, b].map { Int(($0 * 255).rounded()) }
+    }
+
+    // asserts missing explicit projection, not a reproduction of capsule pixels.
+    func testProjectedProminentItemKeepsIdentityAcrossLateAccentAndEnableOnlyChanges() throws {
+        let (session, root, route, item) = try prominentFixture("prominent-late-accent")
+        let p = session.presenter
+        let target = item.target, action = item.action
+        let order = (route.navigationItem.rightBarButtonItems ?? []).map(ObjectIdentifier.init)
+        let pair = [[128, 102, 0, 255], [255, 204, 0, 255]]
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": pair]]]))
+        XCTAssertEqual(try tintRGB(window?.tintColor), [128, 102, 0], "fixture root must actually own the window")
+        XCTAssertEqual(try tintRGB(item.tintColor), [128, 102, 0])
+        XCTAssertEqual(try tintRGB(item.tintColor, .dark), [255, 204, 0])
+        p.navigation.prepareRoutes([route], in: try XCTUnwrap(route.navigationController))
+        XCTAssertTrue(route.navigationItem.rightBarButtonItems?.contains { $0 === item } == true)
+        p.apply(wireBatch([["op": "props", "id": 900001, "set": ["disabled": "true"]]]))
+        XCTAssertFalse(item.isEnabled)
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": [12, 140, 70, 255]]]]))
+        XCTAssertEqual(try tintRGB(item.tintColor), [12, 140, 70])
+        p.apply(wireBatch([["op": "props", "id": 900001, "set": ["disabled": "false"]]]))
+        XCTAssertTrue(item.isEnabled)
+        XCTAssertTrue(item.target === target)
+        XCTAssertEqual(item.action, action)
+        XCTAssertEqual((route.navigationItem.rightBarButtonItems ?? []).map(ObjectIdentifier.init), order)
+        XCTAssertEqual(item.accessibilityIdentifier, "prominent-proof")
+        XCTAssertEqual(item.accessibilityLabel, "Continue")
+        XCTAssertEqual(try tintRGB(item.titleTextAttributes(for: .normal)?[.foregroundColor] as? UIColor), [255, 255, 255])
+        XCTAssertEqual(try tintRGB(item.titleTextAttributes(for: .normal)?[.foregroundColor] as? UIColor, .dark), [0, 0, 0])
+        XCTAssertNil(item.titleTextAttributes(for: .disabled)?[.foregroundColor])
+        XCTAssertEqual((item.titleTextAttributes(for: .normal)?[.font] as? UIFont)?.pointSize, 17)
+    }
+
+    func testProjectedProminentFillFollowsSharedWindowWinnerAndRestoresPlatformTint() throws {
+        let (session, root, _, item) = try prominentFixture("prominent-shared-accent")
+        let p = session.presenter
+        let window = try XCTUnwrap(window)
+        window.tintColor = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 40 / 255, green: 180 / 255, blue: 210 / 255, alpha: 1)
+                : UIColor(red: 70 / 255, green: 40 / 255, blue: 150 / 255, alpha: 1)
+        }
+        let platform = try tintRGB(window.tintColor)
+        XCTAssertEqual(platform, [70, 40, 150])
+        XCTAssertEqual(try tintRGB(window.tintColor, .dark), [40, 180, 210])
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": [128, 102, 0, 255]]]]))
+        let other = Presenter()
+        defer { other.reset() }
+        window.addSubview(other.viewport)
+        other.apply(wireBatch([
+            ["op": "create", "id": 1, "kind": "view", "style": ["accent_color": [180, 40, 50, 255]]],
+            ["op": "roots", "ids": [1]]
+        ]))
+        XCTAssertEqual(try tintRGB(item.tintColor), [180, 40, 50])
+        p.apply(wireBatch([["op": "style", "id": 900001, "style": ["text_color": [20, 30, 40, 255], "written": ["text_color"]]]]))
+        XCTAssertEqual(try tintRGB(item.titleTextAttributes(for: .normal)?[.foregroundColor] as? UIColor), [20, 30, 40])
+        for disabled in ["true", "false"] {
+            p.apply(wireBatch([["op": "props", "id": 900001, "set": ["disabled": disabled]]]))
+            XCTAssertEqual(try tintRGB(window.tintColor), [180, 40, 50])
+            XCTAssertEqual(try tintRGB(item.tintColor), [180, 40, 50], "losing session configuration cannot take the window")
+        }
+        window.tintAdjustmentMode = .dimmed
+        XCTAssertEqual(try tintRGB(item.tintColor), [180, 40, 50], "the stored fill is not baked grey")
+        window.tintAdjustmentMode = .normal
+        XCTAssertEqual(try tintRGB(item.tintColor), [180, 40, 50], "color callbacks must not retake ownership")
+        other.reset()
+        XCTAssertEqual(try tintRGB(item.tintColor), [128, 102, 0])
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": "auto"]]]))
+        XCTAssertEqual(try tintRGB(item.tintColor), platform)
+        XCTAssertEqual(try tintRGB(window.tintColor), platform)
+        XCTAssertEqual(try tintRGB(window.tintColor, .dark), [40, 180, 210])
+        XCTAssertEqual(try tintRGB(item.tintColor, .dark), [40, 180, 210])
+    }
+
+    func testProjectedProminentFillFollowsWindowReplacement() throws {
+        let (session, root, _, item) = try prominentFixture("prominent-window-replacement")
+        let p = session.presenter
+        let old = try XCTUnwrap(window)
+        old.tintColor = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 210 / 255, green: 80 / 255, blue: 150 / 255, alpha: 1)
+                : UIColor(red: 30 / 255, green: 110 / 255, blue: 90 / 255, alpha: 1)
+        }
+        let oldTint = try tintRGB(old.tintColor)
+        XCTAssertEqual(oldTint, [30, 110, 90])
+        XCTAssertEqual(try tintRGB(old.tintColor, .dark), [210, 80, 150])
+        var ancestor: UIView? = p.viewport
+        while ancestor != nil && !(ancestor is ExactView) { ancestor = ancestor?.superview }
+        let view = try XCTUnwrap(ancestor as? ExactView)
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": [[128, 102, 0, 255], [255, 204, 0, 255]]]]]))
+        let next = UIWindow(frame: old.frame)
+        let host = UIViewController()
+        next.rootViewController = host
+        next.tintColor = .systemPurple
+        let nextTint = try tintRGB(next.tintColor)
+        next.makeKeyAndVisible()
+        host.view.addSubview(view)
+        defer { next.isHidden = true }
+        until("the native route remounts") { p.navigation.primaryNavigation?.view.window === next }
+        XCTAssertEqual(try tintRGB(old.tintColor), oldTint)
+        XCTAssertEqual(try tintRGB(old.tintColor, .dark), [210, 80, 150])
+        XCTAssertEqual(try tintRGB(item.tintColor), [128, 102, 0])
+        next.overrideUserInterfaceStyle = .dark
+        XCTAssertEqual(try tintRGB(item.tintColor, .dark), [255, 204, 0])
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": "auto"]]]))
+        XCTAssertEqual(try tintRGB(item.tintColor), nextTint)
+        XCTAssertTrue(p.navigation.primaryNavigation?.topViewController?.navigationItem.rightBarButtonItems?.contains { $0 === item } == true)
+    }
+
+    func testProjectedProminentResetRestoresAnUnsetWindowTint() throws {
+        let (session, root, route, item) = try prominentFixture("prominent-unset-baseline")
+        let window = try XCTUnwrap(window)
+        window.tintColor = nil
+        XCTAssertNil(window.tintColor, "the unset baseline must be established before taking ownership")
+        let order = (route.navigationItem.rightBarButtonItems ?? []).map(ObjectIdentifier.init)
+        session.presenter.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": [128, 102, 0, 255]]]]))
+        XCTAssertEqual(try tintRGB(window.tintColor), [128, 102, 0])
+        XCTAssertEqual(try tintRGB(item.tintColor), [128, 102, 0])
+        session.presenter.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": "auto"]]]))
+        XCTAssertNil(window.tintColor, "release restores the raw optional tint, without inventing a default RGB")
+        XCTAssertTrue(session.presenter.navigation.primaryNavigation?.topViewController === route)
+        XCTAssertEqual((route.navigationItem.rightBarButtonItems ?? []).map(ObjectIdentifier.init), order)
+        XCTAssertTrue(route.navigationItem.rightBarButtonItems?.contains { $0 === item } == true)
+    }
+
+    func testProjectedProminentForegroundRemovalPreservesFontAndPlainItemBehavior() throws {
+        let (session, _, route, item) = try prominentFixture("prominent-foreground")
+        let p = session.presenter
+        let plain = try XCTUnwrap(route.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier == "compose-home" })
+        XCTAssertNil(plain.tintColor)
+        p.apply(wireBatch([["op": "style", "id": 900001, "style": ["text_color": [20, 30, 40, 255], "written": ["text_color"]]]]))
+        XCTAssertEqual(try tintRGB(item.titleTextAttributes(for: .normal)?[.foregroundColor] as? UIColor), [20, 30, 40])
+        XCTAssertEqual((item.titleTextAttributes(for: .normal)?[.font] as? UIFont)?.pointSize, 17)
+        p.apply(wireBatch([["op": "style", "id": 900001, "style": ["text_color": [22, 22, 22, 255]]]]))
+        XCTAssertNil(item.titleTextAttributes(for: .normal)?[.foregroundColor], "inherited color is not an authored foreground")
+        XCTAssertEqual((item.titleTextAttributes(for: .normal)?[.font] as? UIFont)?.pointSize, 17)
+        XCTAssertTrue(route.navigationItem.rightBarButtonItems?.contains { $0 === plain } == true)
+        XCTAssertNil(plain.tintColor)
+        let previousFace = p.buttonFace
+        p.buttonFace = { id in
+            var face = previousFace?(id) ?? ButtonFace()
+            if id == 900001 { face.style = "plain" }
+            return face
+        }
+        p.apply(wireBatch([["op": "style", "id": 900001, "style": ["text_color": [90, 30, 70, 255], "written": ["text_color"]]]]))
+        XCTAssertFalse(HeaderShape.Item(try XCTUnwrap(p.views[900001])).prominent)
+        XCTAssertEqual(try tintRGB(item.tintColor), [90, 30, 70])
+        XCTAssertNil(item.titleTextAttributes(for: .normal)?[.foregroundColor])
+        XCTAssertEqual((item.titleTextAttributes(for: .normal)?[.font] as? UIFont)?.pointSize, 17)
+        XCTAssertTrue(route.navigationItem.rightBarButtonItems?.contains { $0 === item } == true)
+    }
+
+    func testProminentPullDownKeepsMenuAndOrderingAcrossAccentAndEnableChanges() throws {
+        let (session, root, route, _) = try prominentFixture("prominent-menu")
+        let p = session.presenter
+        p.apply(wireBatch([["op": "props", "id": 900001, "set": ["popovertarget": "bar-menu"]]]))
+        let item = try XCTUnwrap(route.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier == "prominent-proof" })
+        let menu = try XCTUnwrap(item.menu, "the fixture must project a real pull-down")
+        XCTAssertFalse(menu.children.isEmpty)
+        XCTAssertNil(item.action)
+        let order = (route.navigationItem.rightBarButtonItems ?? []).map(ObjectIdentifier.init)
+        let badge = try XCTUnwrap(route.navigationItem.leftBarButtonItems?.first { $0.accessibilityLabel == "Profile" })
+        let image = try XCTUnwrap(badge.image)
+        for disabled in ["true", "false"] {
+            p.apply(wireBatch([
+                ["op": "props", "id": 900001, "set": ["disabled": disabled]],
+                ["op": "style", "id": Int(root.id), "style": ["accent_color": disabled == "true" ? [128, 102, 0, 255] : [40, 80, 120, 255]]]
+            ]))
+            XCTAssertEqual((route.navigationItem.rightBarButtonItems ?? []).map(ObjectIdentifier.init), order)
+            XCTAssertTrue(item.menu === menu)
+            XCTAssertNil(item.action)
+            XCTAssertNil(item.target)
+            XCTAssertEqual(item.accessibilityIdentifier, "prominent-proof")
+            XCTAssertEqual(item.isEnabled, disabled == "false")
+            XCTAssertTrue(badge.image === image)
+            XCTAssertNil(badge.tintColor)
+        }
+    }
+
+    func testProminentItemsRefreshDuringCancelledAndCompletedPopsThenRetire() throws {
+        let (session, root, home, homeItem) = try prominentFixture("prominent-transition")
+        let p = session.presenter
+        let nav = try XCTUnwrap(p.navigation.primaryNavigation)
+        _ = Agent(session: session).tap(["id": Int(try node(session, "detail").id)])
+        until("detail is settled") { nav.viewControllers.count == 2 && nav.transitionCoordinator == nil }
+        let detail = try XCTUnwrap(nav.topViewController as? RouteController)
+        let header = try XCTUnwrap(HeaderShape.bar(of: detail.node, back: nil, backIsUIKits: true)?.header)
+        let prior = p.buttonFace
+        p.buttonFace = { id in
+            guard id == 900002 else { return prior?(id) ?? ButtonFace() }
+            var face = ButtonFace(); face.title = "Done"; face.style = "filled"
+            return face
+        }
+        let children = header.container.subviews.compactMap { ($0 as? NodeView)?.id }
+        p.apply(wireBatch([
+            ["op": "create", "id": 900002, "kind": "control", "props": ["type": "button", "testId": "detail-prominent"], "handlers": ["press"]],
+            ["op": "children", "id": Int(header.id), "ids": children + [900002]]
+        ]))
+        let detailItem = try XCTUnwrap(detail.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier == "detail-prominent" })
+        let transitions = Transitions()
+        transitions.interactive = true
+        p.navigation.setAppDelegate(nav, transitions)
+        nav.popViewController(animated: true)
+        until("interactive pop starts") { nav.transitionCoordinator?.isInteractive == true && transitions.animatorStarted }
+        transitions.interaction.update(0.3)
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": [128, 102, 0, 255]]]]))
+        XCTAssertEqual(try tintRGB(homeItem.tintColor), [128, 102, 0])
+        XCTAssertEqual(try tintRGB(detailItem.tintColor), [128, 102, 0])
+        transitions.interaction.cancel()
+        until("cancelled pop settles") { nav.transitionCoordinator == nil && nav.topViewController === detail && !p.navigation.changing }
+        XCTAssertTrue(home.navigationItem.rightBarButtonItems?.contains { $0 === homeItem } == true)
+        XCTAssertTrue(detail.navigationItem.rightBarButtonItems?.contains { $0 === detailItem } == true)
+        transitions.interactive = false
+        nav.popViewController(animated: true)
+        until("completed pop retires detail") { nav.transitionCoordinator == nil && nav.topViewController === home && p.navigation.controllers[detail.node.id] == nil }
+        let retiredTint = try tintRGB(detailItem.tintColor)
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": [30, 100, 60, 255]]]]))
+        XCTAssertEqual(try tintRGB(homeItem.tintColor), [30, 100, 60])
+        XCTAssertEqual(try tintRGB(detailItem.tintColor), retiredTint, "retired items are not refreshed")
+    }
+
+    func testProminentRootReplacementReleasesOwnershipAndDoesNotRetainWindow() throws {
+        weak var releasedWindow: UIWindow?
+        var retainedItem: UIBarButtonItem?
+        try autoreleasepool {
+            let (session, root, _, item) = try prominentFixture("prominent-root-retirement")
+            let p = session.presenter
+            retainedItem = item
+            releasedWindow = window
+            p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": [128, 102, 0, 255]]]]))
+            p.apply(wireBatch([
+                ["op": "create", "id": 900003, "kind": "view", "style": ["accent_color": [30, 100, 60, 255]]],
+                ["op": "roots", "ids": [900003]]
+            ]))
+            XCTAssertEqual(try tintRGB(window?.tintColor), [30, 100, 60])
+            XCTAssertTrue(p.navigation.controllers.isEmpty)
+            let retiredTint = try tintRGB(item.tintColor)
+            p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": [200, 20, 50, 255]]]]))
+            XCTAssertEqual(try tintRGB(window?.tintColor), [30, 100, 60], "retired logical root cannot retake ownership")
+            XCTAssertEqual(try tintRGB(item.tintColor), retiredTint)
+            session.destroy()
+            sessions.removeAll { $0 === session }
+            window?.isHidden = true
+            window?.rootViewController = nil
+            window = nil
+        }
+        until("retained item does not retain its window") { releasedWindow == nil }
+        XCTAssertNotNil(retainedItem)
+        withExtendedLifetime(retainedItem) {}
+    }
+
+    // public property controls only; this is not a password-sheet or pixel fixture.
+    func testProminentResetForegroundWithoutAlert() throws {
+        guard hostedWindowScene() != nil else { throw missing("scene", "prominent alert controls require the hosted scene lifecycle") }
+        try checkResetForegroundAfterAlert(presentsAlert: false, disabledDuringAlert: false)
+    }
+
+    func testProminentResetForegroundAfterCompletedAlert() throws {
+        guard hostedWindowScene() != nil else { throw missing("scene", "prominent alert controls require the hosted scene lifecycle") }
+        try checkResetForegroundAfterAlert(presentsAlert: true, disabledDuringAlert: false)
+    }
+
+    func testProminentResetForegroundAfterDisabledAlertAndReenable() throws {
+        guard hostedWindowScene() != nil else { throw missing("scene", "prominent alert controls require the hosted scene lifecycle") }
+        try checkResetForegroundAfterAlert(presentsAlert: true, disabledDuringAlert: true)
+    }
+
+    private func checkResetForegroundAfterAlert(presentsAlert: Bool, disabledDuringAlert: Bool) throws {
+        guard Thread.isMainThread else { throw MissingPrerequisite(message: "foreground control requires the main thread") }
+        guard Bundle.main.object(forInfoDictionaryKey: "UIApplicationSceneManifest") != nil else {
+            throw MissingPrerequisite(message: "foreground control requires the supported scene-bearing test host")
+        }
+        let scene = try XCTUnwrap(hostedWindowScene(), "the test host must connect its scene")
+        print("foreground host: app=\(UIApplication.shared.applicationState.rawValue) scene=\(scene.activationState.rawValue) scene-id=\(ObjectIdentifier(scene))")
+        guard UIApplication.shared.applicationState == .active, scene.activationState == .foregroundActive else {
+            throw MissingPrerequisite(message: "foreground control requires an active app and foreground-active scene")
+        }
+        let (session, root, route, item) = try prominentFixture("prominent-alert-\(presentsAlert)-\(disabledDuringAlert)")
+        let p = session.presenter
+        let window = try XCTUnwrap(window)
+        let nav = try XCTUnwrap(route.navigationController)
+        let host = try XCTUnwrap(window.rootViewController)
+        print("foreground attachment: window=\(ObjectIdentifier(window)) host=\(ObjectIdentifier(host)) nav=\(ObjectIdentifier(nav)) host-attached=\(host.view.window === window) nav-attached=\(nav.view.window === window) scene-matches=\(window.windowScene === scene)")
+        guard window.windowScene === scene, host.view.window === window, nav.view.window === window,
+              UIApplication.shared.applicationState == .active, scene.activationState == .foregroundActive else {
+            throw MissingPrerequisite(message: "foreground fixture must attach host and navigation to the active scene's same window")
+        }
+        XCTAssertNil(host.presentedViewController)
+        XCTAssertNil(nav.transitionCoordinator)
+        XCTAssertNotEqual(nav.navigationBar.tintAdjustmentMode, .dimmed)
+        let order = (route.navigationItem.rightBarButtonItems ?? []).map(ObjectIdentifier.init)
+        let target = item.target, action = item.action
+        let orange = [[154, 90, 0, 255], [255, 149, 0, 255]]
+        let blue = [[0, 101, 212, 255], [49, 148, 255, 255]]
+
+        func assertProperties(enabled: Bool, lightFill: [Int], darkFill: [Int]) throws {
+            XCTAssertTrue(route.navigationItem.rightBarButtonItems?.contains { $0 === item } == true)
+            XCTAssertEqual((route.navigationItem.rightBarButtonItems ?? []).map(ObjectIdentifier.init), order)
+            XCTAssertTrue(item.target === target)
+            XCTAssertEqual(item.action, action)
+            XCTAssertEqual(item.isEnabled, enabled)
+            XCTAssertEqual(item.accessibilityTraits.contains(.notEnabled), !enabled)
+            XCTAssertEqual(try tintRGB(item.tintColor), lightFill)
+            XCTAssertEqual(try tintRGB(item.tintColor, .dark), darkFill)
+            XCTAssertEqual(try tintRGB(item.titleTextAttributes(for: .normal)?[.foregroundColor] as? UIColor), [255, 255, 255])
+            XCTAssertEqual(try tintRGB(item.titleTextAttributes(for: .normal)?[.foregroundColor] as? UIColor, .dark), [0, 0, 0])
+            for state: UIControl.State in [.normal, .disabled, .highlighted, .selected, .focused] {
+                XCTAssertEqual((item.titleTextAttributes(for: state)?[.font] as? UIFont)?.pointSize, 17)
+                if state != .normal { XCTAssertNil(item.titleTextAttributes(for: state)?[.foregroundColor]) }
+            }
+        }
+
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": orange]]]))
+        try assertProperties(enabled: true, lightFill: [154, 90, 0], darkFill: [255, 149, 0])
+        if disabledDuringAlert {
+            p.apply(wireBatch([["op": "props", "id": 900001, "set": ["disabled": "true"]]]))
+        }
+        p.apply(wireBatch([["op": "style", "id": Int(root.id), "style": ["accent_color": blue]]]))
+        try assertProperties(enabled: !disabledDuringAlert, lightFill: [0, 101, 212], darkFill: [49, 148, 255])
+
+        if presentsAlert {
+            let alert = UIAlertController(title: "Foreground control", message: nil, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            var presented = false
+            host.present(alert, animated: true) { presented = true }
+            defer { if alert.presentingViewController != nil { alert.dismiss(animated: false) } }
+            until("alert presentation completion") { presented }
+            guard presented else { return } // until has recorded failure; do not continue from incomplete presentation.
+            XCTAssertTrue(host.presentedViewController === alert)
+            XCTAssertTrue(alert.view.window === window)
+            XCTAssertEqual(nav.navigationBar.tintAdjustmentMode, .dimmed, "the alert control must exercise native dimming")
+            try assertProperties(enabled: !disabledDuringAlert, lightFill: [0, 101, 212], darkFill: [49, 148, 255])
+            var dismissed = false
+            alert.dismiss(animated: true) { dismissed = true }
+            until("alert dismissal completion") { dismissed }
+            guard dismissed else { return } // until has recorded failure; do not claim restoration before completion.
+            XCTAssertNil(host.presentedViewController)
+            XCTAssertNil(alert.presentingViewController)
+            XCTAssertNil(nav.transitionCoordinator)
+            XCTAssertNotEqual(nav.navigationBar.tintAdjustmentMode, .dimmed, "completed dismissal restores effective mode without a setter")
+            try assertProperties(enabled: !disabledDuringAlert, lightFill: [0, 101, 212], darkFill: [49, 148, 255])
+        }
+        if disabledDuringAlert {
+            p.apply(wireBatch([["op": "props", "id": 900001, "set": ["disabled": "false"]]]))
+        }
+        XCTAssertNil(host.presentedViewController)
+        XCTAssertNotEqual(nav.navigationBar.tintAdjustmentMode, .dimmed)
+        try assertProperties(enabled: true, lightFill: [0, 101, 212], darkFill: [49, 148, 255])
+    }
+
+
 }
 
 /// The block-based UIKit animator remains supported alongside interruptible animators.
