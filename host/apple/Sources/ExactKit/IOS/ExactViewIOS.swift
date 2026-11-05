@@ -136,7 +136,11 @@ public final class ExactView: UIView {
     /// `prefers-color-scheme` is told again (LLP 1069.000 D1).
     private func reportScheme() { session.scheme(dark: traitCollection.userInterfaceStyle == .dark); session.tellPreferences(); session.natives.scopesChanged() }
     /// An app or window tint changed: `AccentColor` is reported again (LLP 1095 D9).
-    public override func tintColorDidChange() { super.tintColorDidChange(); session.reportColors() }
+    public override func tintColorDidChange() {
+        super.tintColorDidChange()
+        session.presenter.navigation.refreshProminentTints()
+        session.reportColors()
+    }
 
     required init?(coder: NSCoder) { nil }
     deinit {
@@ -227,6 +231,7 @@ public final class ExactView: UIView {
         ExactApp.shared.refreshDevPills() // in the window it joined, or another's (DevPill.swift)
         // The window it joined takes the accent; one it left has its own back
         session.presenter.accent.apply()
+        session.presenter.navigation.refreshProminentTints()
         if window != nil { reportScheme() }
         #if os(iOS)
         if window != nil { session.presenter.resolveOrientationLock() } // a lock told before there was a window

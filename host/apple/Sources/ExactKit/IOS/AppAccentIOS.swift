@@ -29,25 +29,20 @@ final class AppAccent {
         set(roots.lazy.compactMap(Self.own).first)
     }
 
-    /// A new set of roots joins the presenter: its accent is said first, and
-    /// a root's restyle while the others are still joining (its inherited
-    /// tint changed) reads the whole set, not the part attached so far.
+    // logical roots keep their accent ownership when navigation reparents them.
+    // weak references neither retain retired views nor confuse a reused node id.
+    private var logicalRoots: [WeakNodeView] = []
+
     func attach(_ set: [NodeView], _ add: ([NodeView]) -> Void) {
+        logicalRoots = set.map { WeakNodeView(view: $0) }
         roots(set)
-        joining = set
-        defer { joining = nil }
         add(set)
     }
-    private var joining: [NodeView]?
 
-    /// A root restyled: the roots say the accent again, by the same rule.
     func restyled(_ node: NodeView) {
-        if let joining {
-            if joining.contains(node) { roots(joining) }
-            return
-        }
-        guard node.superview === presenter.root else { return }
-        roots(presenter.root.subviews.compactMap { $0 as? NodeView })
+        let current = logicalRoots.compactMap(\.view)
+        guard current.contains(where: { $0 === node }) else { return }
+        roots(current)
     }
 
     /// The window the view is in takes the accent. A window the view left,
@@ -63,10 +58,20 @@ final class AppAccent {
         Ledger.take(current, self, tint)
     }
 
+    // read only: a color refresh must not retake shared-window ownership.
+    var effectiveTint: UIColor? {
+        guard let window = presenter.viewport.window else { return nil }
+        if let ledger = Ledger.ledgers.object(forKey: window) {
+            return ledger.held.last?.tint ?? ledger.own
+        }
+        return (presenter.viewport as? RestsTint)?.restingTint ?? window.tintColor
+    }
+
     /// The session ends: its window has its own tint back.
     func release() {
         releasing = true
         defer { releasing = false }
+        logicalRoots.removeAll()
         (said, tint) = (nil, nil)
         apply()
     }
@@ -102,9 +107,9 @@ final class AppAccent {
     /// they took the window. The latest still there tints it; the last to
     /// leave gives the window its own tint back.
     private final class Ledger {
-        private static let ledgers = NSMapTable<UIWindow, Ledger>.weakToStrongObjects()
-        private let own: UIColor?
-        private var held: [(accent: ObjectIdentifier, tint: UIColor)] = []
+        static let ledgers = NSMapTable<UIWindow, Ledger>.weakToStrongObjects()
+        let own: UIColor?
+        var held: [(accent: ObjectIdentifier, tint: UIColor)] = []
         private init(_ own: UIColor?) { self.own = own }
 
         static func take(_ window: UIWindow, _ accent: AppAccent, _ tint: UIColor) {
@@ -118,8 +123,9 @@ final class AppAccent {
         static func leave(_ window: UIWindow, _ accent: AppAccent) {
             guard let ledger = ledgers.object(forKey: window) else { return }
             ledger.held.removeAll { $0.accent == ObjectIdentifier(accent) }
-            if ledger.held.isEmpty { ledgers.removeObject(forKey: window) }
+            // synchronous tint callbacks must still read the saved platform tint.
             window.tintColor = ledger.held.last?.tint ?? ledger.own
+            if ledger.held.isEmpty { ledgers.removeObject(forKey: window) }
         }
     }
 }

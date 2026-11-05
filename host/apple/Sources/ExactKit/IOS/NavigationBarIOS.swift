@@ -1391,18 +1391,7 @@ extension NavigationHost {
         item.isEnabled = !i.disabled
         if i.disabled || i.accessibilityDisabled { item.accessibilityTraits.insert(.notEnabled) }
         else { item.accessibilityTraits.remove(.notEnabled) }
-        // The authored `color` of a plain item's face; a prominent item's
-        // tint is its fill, which `color` is not.
-        if let tint = i.tint, !i.prominent, i.badge == nil, i.chip == nil {
-            item.tintColor = UIColor { TextEngine.color(tint[$0.userInterfaceStyle == .dark ? 1 : 0]) }
-        } else { item.tintColor = nil }
-        // UIKit's font where none is written, also once a kept item's author removes theirs.
-        let font = image == nil ? i.font : nil
-        if item.titleTextAttributes(for: .normal)?[.font] as? UIFont != font {
-            for state: UIControl.State in [.normal, .highlighted, .disabled, .selected, .focused] {
-                item.setTitleTextAttributes(font.map { [.font: $0] }, for: state)
-            }
-        }
+        configureItemColors(item, i, image: image)
         if #available(iOS 26.0, tvOS 26.0, *) {
             item.style = i.prominent ? .prominent : .plain
             // A drawn face is its own shape: no glass capsule around it.
