@@ -100,22 +100,35 @@ final class KeyboardToolbars {
 
     private func apply(_ lift: CGFloat, to sv: UIScrollView, node: NodeView) {
         let prior = insets[node.id]
-        let previous = prior?.scroll === sv ? prior?.amount ?? 0 : 0
+        let sameBackend = prior?.scroll === sv
+        let previous = sameBackend ? prior?.amount ?? 0 : 0
+        // A new backend already holds the reading offset; only move the inset onto it.
+        let shiftNew = sameBackend || prior == nil
         if let prior, prior.scroll !== sv {
-            if let old = prior.scroll { adjust(-prior.amount, on: old) }
+            if let old = prior.scroll { adjust(-prior.amount, on: old, shiftOffset: true) }
             insets.removeValue(forKey: node.id)
         }
         guard previous != lift || sv.contentInset.bottom < lift else { return }
-        adjust(lift - previous, on: sv)
+        adjust(lift - previous, on: sv, shiftOffset: shiftNew)
         insets[node.id] = Inset(scroll: sv, amount: lift)
     }
 
-    private func adjust(_ delta: CGFloat, on sv: UIScrollView) {
+    private func adjust(_ delta: CGFloat, on sv: UIScrollView, shiftOffset: Bool) {
         let maximum = { max(-sv.adjustedContentInset.top, sv.contentSize.height + sv.adjustedContentInset.bottom - sv.bounds.height) }
         let atEnd = sv.contentOffset.y >= maximum() - 1
+        let before = sv.contentOffset.y
         sv.contentInset.bottom += delta
         sv.verticalScrollIndicatorInsets.bottom += delta
-        if atEnd { sv.contentOffset = PixelGrid.offset(CGPoint(x: sv.contentOffset.x, y: maximum()), in: sv) }
+        guard shiftOffset else { return }
+        // At the end, stay pinned. Away from the end, shift by the same delta so what sat
+        // above the toolbar stays above it as the keyboard covers the bottom (a chat scrolled
+        // up was left covered when only the end case moved).
+        if atEnd {
+            sv.contentOffset = PixelGrid.offset(CGPoint(x: sv.contentOffset.x, y: maximum()), in: sv)
+        } else if delta != 0 {
+            let y = min(maximum(), max(-sv.adjustedContentInset.top, before + delta))
+            sv.contentOffset = PixelGrid.offset(CGPoint(x: sv.contentOffset.x, y: y), in: sv)
+        }
     }
 }
 #endif

@@ -138,6 +138,22 @@ final class KeyboardToolbarIOSTests: XCTestCase {
         XCTAssertEqual(replacement.contentOffset.y, 1500, accuracy: 0.5)
     }
 
+    func testAMidScrollTranscriptRisesWithTheKeyboard() throws {
+        let (session, window) = fixture()
+        defer { window.isHidden = true; session.destroy() }
+        let p = session.presenter
+        let transcript = try XCTUnwrap(p.views[2]?.scroll)
+        transcript.contentOffset.y = 400
+        setKeyboard(p, top: 460)
+        XCTAssertEqual(transcript.contentInset.bottom, 306)
+        XCTAssertEqual(transcript.contentOffset.y, 706, accuracy: 0.5,
+                       "away from the end, the offset shifts by the toolbar lift so content stays clear")
+        setKeyboard(p, top: nil)
+        XCTAssertEqual(transcript.contentInset.bottom, 0)
+        XCTAssertEqual(transcript.contentOffset.y, 400, accuracy: 0.5,
+                       "dismissing the keyboard restores the reading offset")
+    }
+
     func testAToolbarInAnotherMountUsesTheWindowKeyboardEvenWhenTheDocumentHasNoOverlap() throws {
         let (session, window) = fixture()
         defer { window.isHidden = true; session.destroy() }
