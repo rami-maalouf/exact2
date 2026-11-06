@@ -71,11 +71,17 @@ final class KeyboardToolbars {
             let lift = presenter.keyboardTop == nil && overlap == 0 ? 0 : max(0, box.maxY - keyboardTop - bar.padding("bottom"))
             if bar.keyboardLift != lift { bar.keyboardLift = lift; bar.applyTransform() }
             if lift > 0 { still.insert(bar.id) }
-            // The scrollers whose bottom is the bar's top, across its width.
+            // The scrollers whose bottom is the bar's top, across its width,
+            // and those that run on under a bar floating over their end (a
+            // transcript seen through a glass composer, its own bottom
+            // padding keeping its last row above the bar): taller than the
+            // bar, starting above it, never one that holds the bar.
             for node in presenter.views.values {
                 guard let sv = node.scrollView, node.window === window, !node.isHidden else { continue }
                 let frame = node.convert(node.bounds, to: window)
-                guard abs(frame.maxY - box.minY) <= 1, frame.maxX > box.minX, frame.minX < box.maxX else { continue }
+                let meets = abs(frame.maxY - box.minY) <= 1
+                let under = frame.minY < box.minY && frame.maxY > box.minY && frame.height > box.height && !bar.isDescendant(of: node)
+                guard meets || under, frame.maxX > box.minX, frame.minX < box.maxX else { continue }
                 owned.insert(node.id)
                 apply(lift, to: sv, node: node)
             }
