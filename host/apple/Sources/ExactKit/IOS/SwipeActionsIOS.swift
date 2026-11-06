@@ -399,6 +399,18 @@ package final class SwipeActionsHost {
         }
     }
 
+    /// After a return to the app (ScrollReturnIOS.swift): how many rows are still projected, and how
+    /// many of them were released because their touch never ended (the app left mid-swipe). A row
+    /// the reader left open stays open.
+    func returned() -> (projected: Int, released: Int) {
+        var projected = 0, released = 0
+        for row in rows.values where row.projected {
+            projected += 1
+            if row.releaseStaleTouch() { released += 1 }
+        }
+        return (projected, released)
+    }
+
     private final class Row: NSObject, UITableViewDataSource, UITableViewDelegate {
         unowned let host: SwipeActionsHost
         let owner: NodeView
@@ -525,6 +537,14 @@ package final class SwipeActionsHost {
             restore(); carrier = nil; logicalParent = nil
             table.setEditing(false, animated: false); table.removeFromSuperview()
             self.table = nil; cell = nil; images.removeAll(); touching = false; open = false
+        }
+        /// No touch can be down at a return: one that never ended keeps the projection, and the row's
+        /// own scroll stilled, for good. Released here; `settle` keeps an open row open.
+        func releaseStaleTouch() -> Bool {
+            guard touching else { return false }
+            touching = false
+            settle()
+            return true
         }
         /// Release the projection once nothing can be swiping: no touch, the
         /// row closed, and UIKit's close animation finished.

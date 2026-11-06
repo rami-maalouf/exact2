@@ -44,6 +44,10 @@ public final class ExactView: UIView {
     var inspectionOwned: [UIView] { keyboardProbe.map { [$0] } ?? [] }
     private var editingObservers: [NSObjectProtocol] = []
     private var sceneObserver: NSObjectProtocol?
+    #if os(iOS)
+    /// Lists' scroll state at each return to the app, logged (ScrollReturnIOS.swift).
+    private var scrollReturn: ScrollReturn?
+    #endif
     /// The adapter's hook for the first root's `viewport-fit` and its
     /// canvas colour (the window's background under the safe areas is the
     /// window's business).
@@ -108,6 +112,9 @@ public final class ExactView: UIView {
             }
         }
         session.presenter.observeKeyboard()
+        #if os(iOS)
+        scrollReturn = ScrollReturn(session.presenter.collections, viewport: self)
+        #endif
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self, UITraitDisplayScale.self]) { (view: ExactView, _: UITraitCollection) in view.session.controlTextChanged() }
         registerForTraitChanges([UITraitUserInterfaceStyle.self, UITraitDisplayScale.self, UITraitAccessibilityContrast.self]) { (view: ExactView, _: UITraitCollection) in view.reportScheme(); view.setNeedsLayout() }
         // The tvOS SDK has no Swift UITraitDefinition for this trait. OS
