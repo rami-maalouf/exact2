@@ -92,7 +92,7 @@ final class KeyboardToolbars {
         }
         lifted = still
         for (id, inset) in insets where !owned.contains(id) {
-            if let sv = inset.scroll { adjust(-inset.amount, on: sv) }
+            if let sv = inset.scroll { adjust(-inset.amount, on: sv, shiftOffset: true) }
             insets.removeValue(forKey: id)
         }
         insets = insets.filter { $0.value.amount > 0 }
