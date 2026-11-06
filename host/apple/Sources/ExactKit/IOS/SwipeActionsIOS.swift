@@ -509,6 +509,10 @@ package final class SwipeActionsHost {
             if stilled { owner.scroll?.isScrollEnabled = true; stilled = false }
             owner.scroll?.isHidden = scrollWasHidden
             mounted = false
+            // A plain list's row line starts at the row's text (RowCellsIOS.swift), which was in the
+            // projection's cell, so the line was drawn from the cell's margin: draw it again now the
+            // content is home, or a row once swiped keeps a full-width line.
+            if let list = owner.rowCell?.list { owner.presenter?.rowCells.sync(changed: [list.id]) }
         }
         /// The row is gone: its claim with it.
         func discard() {
