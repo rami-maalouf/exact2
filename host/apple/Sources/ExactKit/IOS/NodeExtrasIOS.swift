@@ -151,7 +151,8 @@ final class NodeExtras {
     var scrollCornered = false
     var focusRing: CAShapeLayer?
     var scrollEventQueued: Bool = false
-    var lastScrollEvent: (offset: CGPoint, topInset: CGFloat) = (.zero, 0)
+    /// The last `scroll` event's values (`sendScrollEvent`).
+    var lastScrollEvent: [Double] = []
     var dispatchingScrollEvent: Bool = false
     var scrollEnd: ScrollEnd?
     var beforeLayoutScroll: (offset: CGPoint, topInset: CGFloat)?
@@ -370,7 +371,7 @@ extension NodeView {
     var scrollCornered: Bool { get { extras?.scrollCornered ?? false } set { if newValue || extras != nil { more.scrollCornered = newValue } } }
     var focusRing: CAShapeLayer? { get { extras?.focusRing } set { if newValue != nil || extras != nil { more.focusRing = newValue } } }
     var scrollEventQueued: Bool { get { extras?.scrollEventQueued ?? false } set { if newValue || extras != nil { more.scrollEventQueued = newValue } } }
-    var lastScrollEvent: (offset: CGPoint, topInset: CGFloat) { get { extras?.lastScrollEvent ?? (.zero, 0) } set { if newValue.offset != .zero || newValue.topInset != 0 || extras != nil { more.lastScrollEvent = newValue } } }
+    var lastScrollEvent: [Double] { get { extras?.lastScrollEvent ?? [] } set { if !newValue.isEmpty || extras != nil { more.lastScrollEvent = newValue } } }
     var dispatchingScrollEvent: Bool { get { extras?.dispatchingScrollEvent ?? false } set { if newValue || extras != nil { more.dispatchingScrollEvent = newValue } } }
     var scrollEnd: ScrollEnd? { get { extras?.scrollEnd } set { if newValue != nil || extras != nil { more.scrollEnd = newValue } } }
     var beforeLayoutScroll: (offset: CGPoint, topInset: CGFloat)? { get { extras?.beforeLayoutScroll } set { if newValue != nil || extras != nil { more.beforeLayoutScroll = newValue } } }

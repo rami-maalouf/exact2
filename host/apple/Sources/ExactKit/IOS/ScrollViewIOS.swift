@@ -56,6 +56,9 @@ package class ScrollView: UIScrollView {
         let was = keptInset
         keptInset = adjustedContentInset
         super.adjustedContentInsetDidChange()
+        // the port is a `scroll` event's (`clientHeight`): one that changes without moving
+        // the offset gets no `scrollViewDidScroll`, so its event is sent from here.
+        (superview as? NodeView)?.queueScrollEvent()
         guard let node = superview as? NodeView, node.props["scrollStart"] == "end" || node.props["scrollFollowEnd"] == "true",
               node.presenter?.collections.entries[node.id]?.snapshot.horizontal != true,
               !isTracking, !isDecelerating, contentSize.height > 0 else { return }

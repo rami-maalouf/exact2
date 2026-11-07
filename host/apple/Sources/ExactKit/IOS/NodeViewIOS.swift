@@ -812,10 +812,6 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
         guard handlers.contains("scroll"), let sv = scrollView,
               presenter?.views[id] === self, hasScrollLayoutBox else { return }
         let point = sv.contentOffset, top = scrollTopInset(sv)
-        guard point != lastScrollEvent.offset || top != lastScrollEvent.topInset else { return }
-        lastScrollEvent = (point, top)
-        dispatchingScrollEvent = true
-        defer { dispatchingScrollEvent = false }
         // CSS's extents (`ScrollEvent`): the port inside UI insets (native
         // padding and footer room remain content), and the
         // port plus the range UIKit clamps a settled offset to, so at the
@@ -823,10 +819,17 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
         let inset = sv.adjustedContentInset, port = scrollPort(sv).size
         let range = CGSize(width: max(0, sv.contentSize.width + inset.right - sv.bounds.width),
                            height: max(0, sv.contentSize.height + inset.bottom - sv.bounds.height + top))
-        presenter?.scroll(id, [point.x, point.y + top, port.width + range.width, port.height + range.height,
-                               port.width, port.height].map(Double.init))
+        let event = [point.x, point.y + top, port.width + range.width, port.height + range.height,
+                     port.width, port.height].map(Double.init)
+        // a new port with the same offset is news too: a keyboard's inset that went away
+        // left a chat reading its end through the smaller port, its jump button up.
+        guard event != lastScrollEvent else { return }
+        lastScrollEvent = event
+        dispatchingScrollEvent = true
+        defer { dispatchingScrollEvent = false }
+        presenter?.scroll(id, event)
     }
-    private func queueScrollEvent() {
+    func queueScrollEvent() {
         guard handlers.contains("scroll"), !scrollEventQueued else { return }
         scrollEventQueued = true
         DispatchQueue.main.async { [weak self, token = incarnation] in
