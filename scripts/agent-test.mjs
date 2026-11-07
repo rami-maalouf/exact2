@@ -1129,6 +1129,18 @@ export function faultRequest(op, args, origins = [], say = console.warn) {
   return rawFaultRequest(op, [args[0], resolveFaultPrefix(args[1], origins, say), ...args.slice(2)]);
 }
 
+/** `expect` written as a drive step: it is an authored test's assertion, and a drive only reads, so the refusal names
+ * the read that answers the same question (`args`: the words after `expect`). A state path takes no space after a
+ * list index here, as `clock until state` takes it. */
+export function expectInDrive(args) {
+  const [subject, ...rest] = args, compared = rest.indexOf('=='), words = compared < 0 ? rest : rest.slice(0, compared);
+  const target = words.filter((w) => w !== 'has' && w !== 'missing').join(' ') || '<target>';
+  const read = subject === 'state' ? `\`state ${words.join('') || '<path>'}\` reads that state`
+    : subject === 'tree' || subject === 'text' ? `\`tree ${target}\` shows that view${subject === 'text' ? ' and its text' : ''}, or answers that no view matches it`
+    : '`tree <target>`, `state <path>` and `layout <target>` read what it checks';
+  return `expect is a step of an authored test (\`bun exact.mjs test <host>\` runs its \`test\` blocks), not of a drive, which reads and leaves the judging to you: ${read}; \`clock until state <path> == <literal> within <ms>\` waits for a state and fails the drive if it never comes`;
+}
+
 /** The same persistence/fault behavior as an authored test's web reload. */
 export async function reloadWeb(s) {
   if (s.host!=='web') throw new Error('reload in an interactive drive supports web; native authored tests relaunch their host');

@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { openTouches, realTap, springboard } from '../host/apple/touches.mjs';
 import { pageAim, namedRefusal } from './agent-aim.mjs'; import { checkOp } from './agent-check.mjs'; import { compareScreenshot, referenceNote } from './agent-compare.mjs';
 import { parseDrag, dragArguments, dragTap, duringAllowed, duringOp, heldDown, heldPhase, heldRead, holdTap, fileDrag, folderTree, driverFiles } from './agent-drag.mjs';
-import { peekLogs, takeWorldLogs, driveNotes, STORAGE_REFUSED, STORAGE_NOTE, runTests, nodeNamed, targetsIn, unopenedHint, refuseDisabled, reloadWeb, fetchOrigins, loopbackOrigins, faultRequest } from './agent-test.mjs';
+import { peekLogs, takeWorldLogs, driveNotes, STORAGE_REFUSED, STORAGE_NOTE, runTests, nodeNamed, targetsIn, unopenedHint, refuseDisabled, reloadWeb, expectInDrive, fetchOrigins, loopbackOrigins, faultRequest } from './agent-test.mjs';
 import { MalformedOperation, operationReply, inputJSON, keyArguments, validateKey, pointerArguments, resizeArguments, cdpKey, browserKey, nativeKey, typeFor, ticketOf, holdOf, heldTicket, typeArguments, typeCommand, pickedPaths, mouseContact, withHeldModifiers, pasteChord, deliverClipboard, tapWords, tapArguments, pointerGap, chordModifiers, withChordModifiers, heldForClick, clockSlices, padOp, postCommand, postInto } from './agent-keys.mjs';
 import { jsonLines, hangup, waitAtMost, bootRefusal, simulatorConsole, REPLY_MS, AWAY } from './agent-wire.mjs';
 import { openStdio } from './agent-stdio.mjs'; import { appShareTarget, driverShare, webShareLocation } from './share-target.mjs';
@@ -1447,6 +1447,7 @@ export async function main(argv, injected = {}) {
         case 'call': { const door = trimmed.match(/\s--door\s+(\S+)\s*$/); r = await s.op({ op: 'call', tool: args[0], args: trimmed.replace(/\s--door\s+\S+\s*$/, '').replace(/^call\s+\S+\s*/, '') || '{}', door: door?.[1] ?? 'agent' }); break; }
         case 'fail': case 'pass': r = await s.op(faultRequest(op, args, fetchOrigins(resolve(flags.webDist ?? defaultWebDist())))); break;
         case 'perf': r = await perfOp(s, args, line, step); break;
+        case 'expect': throw new MalformedOperation(expectInDrive(args));
         case 'check': r = await checkOp(s, args); break; /* LLP 1116.003 D8: the presented screen, judged in text */ case 'scroll': throw new MalformedOperation(`scroll is not an op: a finger scrolls, \`tap ${args[0] ?? '<scroller>'} drag ${-(Number(args[1]) || 0)} ${-(Number(args[2] ?? 300) || 0)}\` (the content follows the finger: a scroll of 300 down is a drag of -300), a wheel \`tap <scroller> wheel <dx> <dy>\`, a list's row by key \`tap <list> into <key>\``); case 'open': case 'openurl': case 'url': case 'link': throw new MalformedOperation(`${op} is not an op: a link arrives as \`type <root> ${args[0] ?? 'euxy://p/abc'}\`, the root being the node with navigate= (its testId or id, from \`tree\`; LLP 1038 D11); on macOS and iOS a URL with a scheme goes through the app's protocol_handlers as the system delivers it, with no "Open in …?" alert`);
         default: throw new MalformedOperation(`unknown op: ${op} (tree, layout, state, logs, check, screenshot, sample, tap, type, post, pick, reload, clock, resize, close, back, prefer, call, perf, fail fetch, pass fetch)`);
       }

@@ -123,6 +123,11 @@ test('malformed input is labelled before delivery; a state refusal is not', asyn
   await assert.rejects(() => main(['web', 'resize banana'], { open: async () => ({ close() {} }) }), e => e.malformed === true);
   // A deep link is `type` on the navigation root (euxy FRICTION 11): the refusal names that form.
   await assert.rejects(() => main(['web', 'open euxy://p/1'], { open: async () => ({ close() {} }) }), e => e.malformed === true && e.message.includes('`type <root> euxy://p/1`'));
+  // An authored test's `expect` in a drive names the read that answers it, not only the list of ops.
+  for (const [step, read] of [['expect state lib.notes.0 .title == "Milk"', '`state lib.notes.0.title` reads that state'],
+    ['expect tree has "post-0"', '`tree "post-0"` shows that view, or answers'], ['expect text "draft" == ""', '`tree "draft"` shows that view and its text'],
+    ['expect no-failures', '`tree <target>`, `state <path>` and `layout <target>` read']])
+    await assert.rejects(() => main(['web', step], { open: async () => ({ close() {} }) }), e => e.malformed === true && e.message.includes(': expect is a step of an authored test') && e.message.includes(read));
 });
 
 test('accepted pointer, wheel, media and zero-time forms still reach the carrier', async () => {
