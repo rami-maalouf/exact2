@@ -139,10 +139,13 @@ export function assembleMac({intents, shared, library, macWidgets, triple, apple
     }
     return bundlePath;
 }
-export function assembleIOS({intents, shared, library, triple, app, paths, binDir, bin, device, development, appleReach, tv, bakedCompat, bakedPlan, ipa, linkRoot, swiftc, buildReceipt, rosterKeys, sdkName, production, distribution, stampSdk, libDir, gpuArtifacts, looseArms, modulesBuilt, modulesLoadName, hasSvg, svgBuilt, svgLoadName, svgFilterBuilt, svgFilterLibraryName, canvasGpuBuilt, canvasGpuLoadName, args, unsigned, prof, ph, sha1, composition, destination, target, sdk, hasGpu, dylib, alarm = null}, {runApple, appleArtifacts, macInfoPlist, copyAppleStaticTrees, writeUsageStrings, receipt, shippedReceipt, assertAppleIdentity, placeAppleArtifact, infoPlist, distributionKeys, copyAppleGpuProducts, entitlements, appClip}) {
+export function assembleIOS({intents, shared, library, triple, app, paths, binDir, bin, device, development, appleReach, tv, bakedCompat, bakedPlan, ipa, linkRoot, swiftc, buildReceipt, rosterKeys, sdkName, production, distribution, stampSdk, libDir, gpuArtifacts, looseArms, modulesBuilt, modulesLoadName, hasSvg, svgBuilt, svgLoadName, svgFilterBuilt, svgFilterLibraryName, canvasGpuBuilt, canvasGpuLoadName, args, unsigned, prof, ph, sha1, composition, destination, target, sdk, hasGpu, dylib, alarm = null}, {runApple, appleArtifacts, macInfoPlist, copyAppleStaticTrees, writeUsageStrings, receipt, shippedReceipt, assertAppleIdentity, placeAppleArtifact, infoPlist, distributionKeys, copyAppleGpuProducts, entitlements, appClip, stripForDistribution}) {
   // The bundle, assembled from scratch (new inodes, see above), with the app's assets (a phone reads no other
   // machine's paths); ad-hoc signed for a simulator, signed with the team's identity, profile, and entitlements for a phone.
   const bundle = resolve(binDir, basename(paths.bundle));
+  // An archive's frameworks' dSYMs, laid out as an Xcode archive's `dSYMs`; the app's own is `<name>.dSYM` (build.mjs).
+  const symbols = ipa ? `${ipa.replace(/\.ipa$/, '')}.dSYMs` : null, frameworkSaved = new Map();
+  if (symbols) rmSync(symbols, { recursive: true, force: true });
   mkdirSync(resolve(bundle, 'Frameworks'), { recursive: true });
   if (shared) cpSync(shared.framework, resolve(bundle, 'Frameworks/ExactCore.framework'), { recursive: true });
   copyFileSync(bin, resolve(bundle, paths.executable));
@@ -245,10 +248,16 @@ export function assembleIOS({intents, shared, library, triple, app, paths, binDi
       profile: signingProfile ? profile(ph?.udid, widgetId(app)) : null,
       entitlements: entitlements({ ...app, id: widgetId(app), widgetAppId: app.id }, signingProfile?.team, signingProfile?.dev ?? !unsigned, null, { simulator: !device, prefix: signingProfile?.prefix }),
       sign: (extension, ent) => run('codesign', ['--force', '--sign', signingIdentity, '--timestamp=none', ...(device ? ['--entitlements', ent] : []), extension], { stdio: 'ignore' }) });
+    // Each framework ships stripped as the executable does, before it is signed. A GPU framework keeps its bytes, which
+    // the bake names (Cargo's release profile stripped it). An App Clip's frameworks are the app's bytes: the same dSYMs.
+    if (ipa) for (const f of readdirSync(resolve(assembled, 'Frameworks')).filter(f => f.endsWith('.framework'))) {
+      const gpu = gpuArtifacts.some(m => f === `${m.framework}.framework`);
+      frameworkSaved.set(f, stripForDistribution(resolve(assembled, 'Frameworks', f, basename(f, '.framework')), resolve(symbols, `${f}.dSYM`), { strip: !gpu }).saved);
+    }
     for (const f of readdirSync(resolve(assembled, 'Frameworks')).filter(f => !gpuArtifacts.some(m => f === (ipa ? `${m.framework}.framework` : m.load)))) run('codesign', ['--force', '--sign', signingIdentity, '--timestamp=none', resolve(assembled, 'Frameworks', f)], { stdio: 'ignore' });
     if (ipa) assertArchiveFrameworks(resolve(assembled, 'Frameworks'));
     if (ipa) assertActivityRefusals(assembled, runApple);
     run('codesign', ['--force', '--sign', signingIdentity, '--timestamp=none', ...(device ? ['--entitlements', ent] : []), assembled], { stdio: 'ignore' });
   }
-  return bundles;
+  return { bundles, frameworkSymbols: { dir: symbols, count: frameworkSaved.size, saved: [...frameworkSaved.values()].reduce((sum, saved) => sum + saved, 0) } };
 }
