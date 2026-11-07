@@ -86,7 +86,7 @@ final class KeyboardToolbars {
         }
         lifted = still
         for (id, inset) in insets where !owned.contains(id) {
-            if let sv = inset.scroll { adjust(-inset.amount, on: sv) }
+            if let sv = inset.scroll { adjust(-inset.amount, on: sv, keyboard: 0) }
             insets.removeValue(forKey: id)
         }
         insets = insets.filter { $0.value.amount > 0 }
@@ -96,17 +96,26 @@ final class KeyboardToolbars {
         let prior = insets[node.id]
         let previous = prior?.scroll === sv ? prior?.amount ?? 0 : 0
         if let prior, prior.scroll !== sv {
-            if let old = prior.scroll { adjust(-prior.amount, on: old) }
+            if let old = prior.scroll { adjust(-prior.amount, on: old, keyboard: 0) }
             insets.removeValue(forKey: node.id)
         }
         guard previous != lift || sv.contentInset.bottom < lift else { return }
-        adjust(lift - previous, on: sv)
+        adjust(lift - previous, on: sv, keyboard: lift)
         insets[node.id] = Inset(scroll: sv, amount: lift)
     }
 
-    private func adjust(_ delta: CGFloat, on sv: UIScrollView) {
+    /// `keyboard`: the scroller's whole keyboard inset once `delta` is applied.
+    private func adjust(_ delta: CGFloat, on sv: UIScrollView, keyboard: CGFloat) {
         let maximum = { max(-sv.adjustedContentInset.top, sv.contentSize.height + sv.adjustedContentInset.bottom - sv.bounds.height) }
         let atEnd = sv.contentOffset.y >= maximum() - 1
+        // The content's least height leaves the keyboard's inset out (`scrollFloor`), set before
+        // the inset so UIKit's inset change (`ScrollView.adjustedContentInsetDidChange`) already
+        // keeps the content's own end: a short transcript rises by what the keyboard covers of
+        // its rows, not by the whole keyboard, which put its newest row behind the top bar.
+        if let node = sv.superview as? NodeView, node.scroll === sv, (node.extras?.keyboardInset ?? 0) != keyboard {
+            node.more.keyboardInset = keyboard
+            node.fitScroll()
+        }
         sv.contentInset.bottom += delta
         sv.verticalScrollIndicatorInsets.bottom += delta
         if atEnd { sv.contentOffset = PixelGrid.offset(CGPoint(x: sv.contentOffset.x, y: maximum()), in: sv) }
