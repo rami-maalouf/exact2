@@ -605,6 +605,10 @@ shows the eight placements with the Island's geometry of one device (the
 iPhone 17 Pro's, `IslandGeometry`), its expanded regions allocated together
 as ActivityKit arranges them.
 The sends that start, update and end an activity are LLP 1126.001 WP9.
+An archive refuses `registerForRemoteNotifications` in any of its binaries, also in
+an app with no activity. Swift in `modules/apple/` and in packages compiles with
+`EXACT_DEVELOPMENT` defined in a development build only, so a call that a development
+build needs goes inside `#if EXACT_DEVELOPMENT` and stays out of an archive.
 
 The bake writes `plans/activities.json` and `activities/<kind>.schema.json` plus
 `activities/<kind>.d.ts` (exporting `State`, `Attributes` and `ContentState`). The
