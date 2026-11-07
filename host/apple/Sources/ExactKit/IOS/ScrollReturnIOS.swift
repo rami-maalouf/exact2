@@ -99,6 +99,9 @@ final class ScrollReturn: NSObject {
     /// The scene is active again: each list's state, then what was left in flight cleared. Nothing
     /// that is not stuck changes: a correction is cancelled where it stands (no jump), the pin
     /// only goes when one is held (no touch can be down now), and an open swipe stays open.
+    /// Recognizers still in began/changed are force-ended: a phone freeze left
+    /// `_UIFlexInteractionPanGestureRecognizer` (and sometimes the interactive-back pan) in
+    /// `.changed` with no finger down, so every other pan waited on it until a tab remount.
     private func returned() {
         returns += 1
         returnedAt = CACurrentMediaTime()
@@ -113,9 +116,32 @@ final class ScrollReturn: NSObject {
         let pinned = collections.interaction != nil
         if pinned { collections.pointer(nil) }
         let swipes = collections.presenter?.swipeActions.returned() ?? (projected: 0, released: 0)
-        note("cleared return=\(returns) corrections=\(corrections) pin=\(pinned) swipes-projected=\(swipes.projected) swipes-released=\(swipes.released)")
+        let released = releaseStuck("return")
+        note("cleared return=\(returns) corrections=\(corrections) pin=\(pinned) swipes-projected=\(swipes.projected) swipes-released=\(swipes.released) recognizers-released=\(released)")
         drags = 0
         active("return")
+    }
+
+    /// Force-end every window recognizer still in began/changed (except this probe). Toggling
+    /// `isEnabled` cancels UIKit's gesture; needed for system pans that never leave `.changed`
+    /// after a return (liquid-glass `_UIFlexInteraction` on the window, interactive-back parallax).
+    @discardableResult
+    private func releaseStuck(_ why: StaticString) -> Int {
+        guard let window = viewport?.window else { return 0 }
+        var released = 0
+        var stack: [UIView] = [window]
+        while let v = stack.popLast() {
+            for g in v.gestureRecognizers ?? [] where g.state == .began || g.state == .changed {
+                if g === probe { continue }
+                note("release \(why) \(Self.describe(g))")
+                g.isEnabled = false
+                g.isEnabled = true
+                released += 1
+            }
+            stack.append(contentsOf: v.subviews)
+        }
+        if released > 0 { note("released \(why) return=\(returns) count=\(released)") }
+        return released
     }
 
     /// The app is leaving the front: each list, and any recognizer still active.
@@ -168,7 +194,12 @@ final class ScrollReturn: NSObject {
         }
         let heard = (touch.gestureRecognizers ?? []).map(Self.describe).joined(separator: " ")
         note("drag \(how) return=\(returns) n=\(drags) from=\(Self.num(from.x)),\(Self.num(from.y)) by=\(Self.num(to.x - from.x)),\(Self.num(to.y - from.y)) moved=\(moved) since=\(Self.num(CGFloat(CACurrentMediaTime() - returnedAt))) heard=\(heard)")
-        if !moved { active("drag") }
+        if !moved {
+            active("drag")
+            // Finger is up; a pan still in began/changed is what freezes every later drag
+            // (phone log: `_UIFlexInteractionPanGestureRecognizer` stayed `.changed`).
+            releaseStuck("drag")
+        }
     }
 
     fileprivate func ended(_ point: CGPoint) {
