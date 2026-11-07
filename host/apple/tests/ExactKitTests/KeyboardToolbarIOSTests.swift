@@ -154,6 +154,29 @@ final class KeyboardToolbarIOSTests: XCTestCase {
                        "dismissing the keyboard restores the reading offset")
     }
 
+    func testAShortTranscriptRisesOnlyByWhatTheKeyboardCoversOfItsRows() throws {
+        let (session, window) = fixture()
+        defer { window.isHidden = true; session.destroy() }
+        let p = session.presenter
+        // a few messages: 500 points of rows in a 710-point port, shown from the start.
+        p.apply(wireBatch([
+            ["op": "content", "id": 2, "w": 400.0, "h": 500.0],
+            ["op": "frame", "id": 4, "x": 0.0, "y": 0.0, "w": 400.0, "h": 500.0]
+        ]))
+        let transcript = try XCTUnwrap(p.views[2]?.scroll)
+        XCTAssertEqual(transcript.contentSize.height, 710, "with no keyboard the content still fills the port")
+        XCTAssertEqual(transcript.contentOffset.y, 0)
+        setKeyboard(p, top: 460)
+        XCTAssertEqual(transcript.contentInset.bottom, 306)
+        XCTAssertEqual(transcript.contentSize.height, 500, accuracy: 0.5, "the keyboard's inset leaves the port")
+        XCTAssertEqual(transcript.contentOffset.y, 96, accuracy: 0.5,
+                       "the last row rests on the bar: 500 + 306 - 710, not the whole 306 that put the first rows under the top")
+        setKeyboard(p, top: nil)
+        XCTAssertEqual(transcript.contentInset.bottom, 0)
+        XCTAssertEqual(transcript.contentSize.height, 710)
+        XCTAssertEqual(transcript.contentOffset.y, 0, accuracy: 0.5)
+    }
+
     func testAToolbarInAnotherMountUsesTheWindowKeyboardEvenWhenTheDocumentHasNoOverlap() throws {
         let (session, window) = fixture()
         defer { window.isHidden = true; session.destroy() }

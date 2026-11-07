@@ -92,7 +92,7 @@ final class KeyboardToolbars {
         }
         lifted = still
         for (id, inset) in insets where !owned.contains(id) {
-            if let sv = inset.scroll { adjust(-inset.amount, on: sv, shiftOffset: true) }
+            if let sv = inset.scroll { adjust(-inset.amount, on: sv, shiftOffset: true, keyboard: 0) }
             insets.removeValue(forKey: id)
         }
         insets = insets.filter { $0.value.amount > 0 }
@@ -105,18 +105,27 @@ final class KeyboardToolbars {
         // A new backend already holds the reading offset; only move the inset onto it.
         let shiftNew = sameBackend || prior == nil
         if let prior, prior.scroll !== sv {
-            if let old = prior.scroll { adjust(-prior.amount, on: old, shiftOffset: true) }
+            if let old = prior.scroll { adjust(-prior.amount, on: old, shiftOffset: true, keyboard: 0) }
             insets.removeValue(forKey: node.id)
         }
         guard previous != lift || sv.contentInset.bottom < lift else { return }
-        adjust(lift - previous, on: sv, shiftOffset: shiftNew)
+        adjust(lift - previous, on: sv, shiftOffset: shiftNew, keyboard: lift)
         insets[node.id] = Inset(scroll: sv, amount: lift)
     }
 
-    private func adjust(_ delta: CGFloat, on sv: UIScrollView, shiftOffset: Bool) {
+    /// `keyboard`: the scroller's whole keyboard inset once `delta` is applied.
+    private func adjust(_ delta: CGFloat, on sv: UIScrollView, shiftOffset: Bool, keyboard: CGFloat) {
         let maximum = { max(-sv.adjustedContentInset.top, sv.contentSize.height + sv.adjustedContentInset.bottom - sv.bounds.height) }
         let atEnd = sv.contentOffset.y >= maximum() - 1
         let before = sv.contentOffset.y
+        // The content's least height leaves the keyboard's inset out (`scrollFloor`), set before
+        // the inset so UIKit's inset change (`ScrollView.adjustedContentInsetDidChange`) already
+        // keeps the content's own end: a short transcript rises by what the keyboard covers of
+        // its rows, not by the whole keyboard, which put its newest row behind the top bar.
+        if let node = sv.superview as? NodeView, node.scroll === sv, (node.extras?.keyboardInset ?? 0) != keyboard {
+            node.more.keyboardInset = keyboard
+            node.fitScroll()
+        }
         sv.contentInset.bottom += delta
         sv.verticalScrollIndicatorInsets.bottom += delta
         guard shiftOffset else { return }

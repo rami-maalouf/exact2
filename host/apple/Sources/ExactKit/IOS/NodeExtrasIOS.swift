@@ -191,6 +191,8 @@ final class NodeExtras {
     var pageBand = UIEdgeInsets.zero
     /// The part of the band its scroll view's `contentInset` holds (LLP 1131 D2).
     var bandInset = UIEdgeInsets.zero
+    /// The bottom inset a keyboard toolbar gives its scroll view (`KeyboardToolbarIOS.swift`).
+    var keyboardInset: CGFloat = 0
     /// A control bar over a scroller's content (LLP 1131 D3, D4): the scroller's paint rank, which it is placed
     /// above, and UIKit's edge effect.
     var bandOver: Int64?
@@ -439,9 +441,13 @@ extension NodeView {
     /// UIKit insets, the port between the insets the kernel lays its content
     /// out in (LLP 1116.000 D1.2), so a page shorter than that port does not
     /// scroll by the bar and the home indicator, as a table view's does not.
+    /// A keyboard toolbar's inset leaves the port too: a short transcript
+    /// rises only by what the keyboard would cover of its rows, as a
+    /// collection view's does, not by the whole keyboard.
     func scrollFloor(_ sv: UIScrollView) -> CGFloat {
-        guard case .inset(let top, let bottom)? = presenter?.navigation.covers[id] else { return sv.bounds.height - pageBand.top - pageBand.bottom }
-        return max(0, sv.bounds.height - top - bottom - pageBand.top - pageBand.bottom)
+        let keyboard = extras?.keyboardInset ?? 0
+        guard case .inset(let top, let bottom)? = presenter?.navigation.covers[id] else { return max(0, sv.bounds.height - pageBand.top - pageBand.bottom - keyboard) }
+        return max(0, sv.bounds.height - top - bottom - pageBand.top - pageBand.bottom - keyboard)
     }
 }
 extension UIColor {
