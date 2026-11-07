@@ -709,6 +709,14 @@ final class WaveformCanvas: ExactPackagePlatformView {
 
     func stop() { (link as? CADisplayLink)?.invalidate(); link = nil }
 
+    /// A bar's height from an RMS level, in decibels as a recorder draws it: -50 dB and below is
+    /// the floor, -6 dB and above full. Raw RMS kept speech (about 0.01 to 0.2) nearly flat.
+    /// The level the app reads (`audioLevel`) stays the RMS value.
+    static func shown(_ level: Double) -> Double {
+        guard level > 0 else { return 0 }
+        return max(0, min(1, (20 * log10(level) + 50) / 44))
+    }
+
     override func draw(_ rect: CGRect) {
         #if os(macOS)
         guard let g = NSGraphicsContext.current?.cgContext else { return }
@@ -719,7 +727,7 @@ final class WaveformCanvas: ExactPackagePlatformView {
         g.setFillColor(color.cgColor)
         for (i, level) in bars.enumerated() {
             let x = w - CGFloat(bars.count - i) * (Self.bar + Self.gap) + Self.gap
-            let half = max(1, CGFloat(level) * (h / 2 - 2))
+            let half = max(1, CGFloat(Self.shown(level)) * (h / 2 - 2))
             g.fill(CGRect(x: x, y: h / 2 - half, width: Self.bar, height: half * 2))
         }
     }

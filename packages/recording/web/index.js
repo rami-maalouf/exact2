@@ -21,6 +21,13 @@
 //   signal on the session clock, and a stopped recorder's file is WAV, 16-bit
 //   PCM, of a tone that follows the signal, answered as `audio/wav`.
 
+// A bar's height from an RMS level, in decibels as a recorder draws it: -50 dB and below is the
+// floor, -6 dB and above full (Recording.swift's `shown`). The level the app reads stays RMS.
+function shownLevel(level) {
+  if (!(level > 0)) return 0;
+  return Math.max(0, Math.min(1, (20 * Math.log10(level) + 50) / 44));
+}
+
 /** The synthetic signal at step `i` (one step a 50 ms of the session clock): the recorder's formula (§10). */
 export const synthetic = i => Math.min(1, 0.12 + 0.75 * Math.abs(Math.sin(i * 0.37)) * (0.55 + 0.45 * Math.sin(i * 0.05)));
 const STEP = 50;
@@ -330,7 +337,7 @@ class Waveform {
     g.clearRect(0, 0, w, h);
     g.fillStyle = this.color || getComputedStyle(this.element).color;
     this.bars.slice(-fit).forEach((level, i, shown) => {
-      const x = w - (shown.length - i) * (BAR + GAP) + GAP, half = Math.max(1, level * (h / 2 - 2));
+      const x = w - (shown.length - i) * (BAR + GAP) + GAP, half = Math.max(1, shownLevel(level) * (h / 2 - 2));
       g.fillRect(x, h / 2 - half, BAR, half * 2);
     });
   }
