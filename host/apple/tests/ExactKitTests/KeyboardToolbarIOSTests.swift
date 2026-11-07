@@ -161,6 +161,30 @@ final class KeyboardToolbarIOSTests: XCTestCase {
         XCTAssertEqual(transcript.contentOffset.y, 0, accuracy: 0.5)
     }
 
+    func testAKeyboardThatMovesNoOffsetStillSendsTheNewPortInAScrollEvent() throws {
+        let (session, window) = fixture()
+        defer { window.isHidden = true; session.destroy() }
+        let p = session.presenter
+        // rows short enough that neither the keyboard nor its leaving moves the offset.
+        p.apply(wireBatch([
+            ["op": "content", "id": 2, "w": 400.0, "h": 300.0],
+            ["op": "frame", "id": 4, "x": 0.0, "y": 0.0, "w": 400.0, "h": 300.0]
+        ]))
+        let owner = try XCTUnwrap(p.views[2]), transcript = try XCTUnwrap(owner.scroll)
+        owner.handlers.insert("scroll")
+        var events: [[Double]] = []
+        p.onScroll = { _, values in events.append(values) }
+        setKeyboard(p, top: 460)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(transcript.contentOffset.y, 0, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(events.last)[5], 404, accuracy: 0.5, "the port above the bar: 710 - 306")
+        setKeyboard(p, top: nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(transcript.contentOffset.y, 0, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(events.last)[5], 710, accuracy: 0.5,
+                       "the whole port again, though the offset never moved: a stale port read the end as far away")
+    }
+
     func testAToolbarInAnotherMountUsesTheWindowKeyboardEvenWhenTheDocumentHasNoOverlap() throws {
         let (session, window) = fixture()
         defer { window.isHidden = true; session.destroy() }
