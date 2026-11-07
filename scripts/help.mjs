@@ -53,7 +53,7 @@ const DRIVE_INTERNAL = ['--app <name>', '--session <label>', '--pid <pid>', '--o
 const NATIVE_PORTS = 'iOS simulator: a Unix socket; --device: a free TCP port; macOS, Linux, Android: stdio.';
 
 // host/apple/build.mjs's flags, which `ios` and `mac` both run: each documents its own, and takes the rest.
-const APPLE = ['--painted-benchmark', '--watchos', '--watch-sim <udid>', '--ios', '--tvos', '--device', '--run', '--no-install', '--prebuild', '--release', '--host', '--embed', '--bundle', '--distribution', '--unsigned', '--test',
+const APPLE = ['--painted-benchmark', '--watchos', '--watch-sim <udid>', '--ios', '--tvos', '--device', '--run', '--no-install', '--prebuild', '--release', '--host', '--embed', '--bundle', '--distribution', '--unsigned', '--test', '--only <Class,…>',
   '--archive <out.ipa>', '--sim <udid|name>', '--phone <udid|name>', '--url <url>', '--optimize <speed|size>', '--link <plan>', '--widget-gallery'];
 const appleRest = (documented) => APPLE.filter((spec) => !documented.some(([row]) => specs(row).some((d) => name(d) === name(spec))));
 const OPTIMIZE = ['--optimize speed|size', 'the Rust archive\'s (default speed, or app.json host.ios|macos.optimize)'];
@@ -255,6 +255,26 @@ instead, in about a second.
 Ports    none. Runs to completion (--run too); --prebuild returns at once, the build going on
          apart from this shell (its pid printed; test, agent and ios without it wait for it).`,
     example: 'bun exact.mjs ios --run',
+  },
+  share: {
+    line: 'build for iPhone and print an AppDrop link that installs it',
+    usage: 'bun exact.mjs share [--new-link | --force] [--json]',
+    common: ['share    an AppDrop link that installs the app on an iPhone'],
+    flags: [
+      ['--new-link', 'a new link for this branch, when the last share was from another branch'],
+      ['--force', 'publish over the other branch\'s link instead'],
+      ['--json', 'one JSON object on stdout: url, revision, branch, action (or code and error)'],
+    ],
+    internal: ['--app <name>'],
+    body: `Run it when the app is ready for a person to try on their phone, and send them the link
+(stdout's last line). They open it on their iPhone, and AppDrop installs the app with their
+own Apple ID. The first share makes the link; later ones publish a new version to it, and
+an installed copy offers the update. With the app's and exact2's trees clean and unchanged
+since the last share it rebuilds nothing and prints the same link. A share from another git
+branch than the last stops with code link_branch_mismatch: pass --new-link or --force.
+The link is kept in .exact/appdrop.json; the iPhone build takes minutes the first time.
+Ports    none. Runs to completion.`,
+    example: 'bun exact.mjs share',
   },
   mac: {
     line: 'build the macOS app (--run launches it here)',

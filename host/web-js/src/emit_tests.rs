@@ -46,6 +46,20 @@ fn keep_mounted_is_a_list_option_read_again() {
 }
 
 #[test]
+fn list_measurements_read_parent_body_inputs_and_outer_frames() {
+    let source = "component App\n  state ids = [1, 2]\n  state h = 32\n  view\n    list virtualized=true height=200\n      for x in ids key=x\n        text `${x}` height=(h + ids.length)\n";
+    let js = crate::emit::emit(&contract::compile(source).unwrap(), false, false)
+        .unwrap()
+        .js;
+    assert!(js.contains("inputs:()=>[s_0(),s_1()],opaque:false"), "{js}");
+    let source = "component App\n  view\n    column\n      for group, i in [[1, 2]] key=i\n        list virtualized=true height=200\n          for x in group key=x\n            text `${group.length + x}`\n";
+    let js = crate::emit::emit(&contract::compile(source).unwrap(), false, false)
+        .unwrap()
+        .js;
+    assert!(js.contains("inputs:()=>[i0(),x0()],opaque:false"), "{js}");
+}
+
+#[test]
 fn a_page_given_app_files_is_no_source_until_the_glue_gives_them() {
     let plan = contract::compile(
         "component App\n  view\n    iframe src=\"assets/viewer.html?file=app:/cache/a.pdf\"\n",
@@ -186,6 +200,33 @@ fn a_runner_owned_resource_is_marked() {
         .expect("full's row");
     assert!(time.contains(".r.owned=true;"), "{time}");
     assert!(!full.contains(".r.owned"), "{full}");
+}
+
+/// LLP 1104 D6 (amended 2026-11-05): a button's or a link's `outline="none"`
+/// is its own `outline-style`, as a field's is.
+#[test]
+fn outline_none_is_any_focusable_elements_own_declaration() {
+    let plan = contract::compile(
+        "component App\n  state n = 0\n  action go\n    n = n + 1\n  view\n    column\n      button press=go outline=\"none\"\n        text \"Go\"\n      link href=\"/a\" outline=\"none\"\n        text \"A\"\n      button press=go\n        text \"Plain\"\n",
+    )
+    .unwrap();
+    let out = crate::emit::emit(&plan, false, false).unwrap();
+    let classes: Vec<_> = out
+        .css
+        .split(".c")
+        .filter(|c| c.contains("outline-style:none"))
+        .map(|c| c.split('{').next().unwrap().to_string())
+        .collect();
+    assert!(!classes.is_empty(), "{}", out.css);
+    for tag in ["button", "a"] {
+        assert!(
+            classes
+                .iter()
+                .any(|c| out.js.contains(&format!("\"{tag}\",{c},"))),
+            "the {tag}'s class: {}",
+            out.js
+        );
+    }
 }
 
 /// LLP 1104 D6: `outline="none"` is the field's own `outline-style`, in its

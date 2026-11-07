@@ -183,7 +183,7 @@ const compiler = webCompiler();
 const cargo = spawnSync(compiler.cmd, [...compiler.pre, 'js', input, '-o', gen, '--app', appDir, ...(production ? [] : ['--sites']), ...(devReload ? ['--dev-reload'] : [])], { cwd: root, stdio: checkOnly ? ['ignore', 'ignore', 'pipe'] : 'inherit', encoding: 'utf8', env: { ...process.env, EXACT_JS_GPU_SURFACES: gpuSurfaces.join(',') } });
 if (cargo.status !== 0) { if (checkOnly) process.stderr.write(cargo.stderr ?? ''); process.exit(cargo.status ?? 1); }
 compiler.done();
-const runtime = ['rt.js', 'resource-inspection.js', 'rt-link.js', 'generation-reload.js', 'elements.js', 'editor.js', 'live-time.js', 'font-family.js', 'observers.js', 'grid.js', 'overlay.js', 'roster.js', 'router.js', 'route-pattern.js', 'schedule.js', 'timer-waits.js', 'timer-observations.js', 'budget.js', 'shape.js', 'pointer.js', 'document.js', 'media.js', 'commands.js', 'focus.js', 'backdrop.js', 'persist.js', 'modes.js', 'beat.js', 'regions.js', 'said.js', 'held.js', 'uploads.js', 'lower.js'];
+const runtime = ['rt.js', 'resource-inspection.js', 'rt-link.js', 'generation-reload.js', 'elements.js', 'editor.js', 'live-time.js', 'font-family.js', 'observers.js', 'grid.js', 'overlay.js', 'roster.js', 'router.js', 'route-pattern.js', 'schedule.js', 'each.js', 'timer-waits.js', 'timer-observations.js', 'budget.js', 'shape.js', 'pointer.js', 'document.js', 'media.js', 'commands.js', 'focus.js', 'backdrop.js', 'persist.js', 'modes.js', 'beat.js', 'regions.js', 'said.js', 'held.js', 'uploads.js', 'lower.js'];
 for (const f of runtime) cpSync(resolve(here, f === 'timer-observations.js' ? '../web/' + f : f), resolve(gen, f));
 // The live table's runtime is the dev loop's build's alone.
 if (!devReload) writeFileSync(resolve(gen, 'modes.js'), withoutDev(readFileSync(resolve(here, 'modes.js'), 'utf8')));
@@ -498,7 +498,7 @@ writeFileSync(resolve(gen, 'main.js'), [
   // After the first render, which a font wait may defer (`containers()` reads the runtime's `globalThis.exact`).
   ...(containerHatches ? ["go(() => requestAnimationFrame(() => requestAnimationFrame(() => import('./hatches.js').then(m => m.containers()))));"] : []),
 ].join('\n'));
-for (const f of ['agent.js', 'check.js', 'perf.js', 'seam.js', 'rust-data.js', 'list.js', 'facts.js', 'modules.js', 'sheets.js', 'samples.js', 'wakes.js', 'reach.js', 'devices.js', 'members.js', 'arrival.js', 'calls.js', 'update.js', 'spans.js', 'views.js', 'pictures.js', 'symbols.js', 'motion.js', 'drag-target.js', 'transform.js', 'svg-transform.js', 'dataset.js', 'format.js', 'hatches.js', 'arrange.js', 'reorder.js', 'flow.js', 'native.js', 'shared.js']) cpSync(resolve(here, f), resolve(gen, f));
+for (const f of ['agent.js', 'check.js', 'perf.js', 'seam.js', 'rust-data.js', 'list.js', 'facts.js', 'modules.js', 'sheets.js', 'samples.js', 'wakes.js', 'reach.js', 'devices.js', 'members.js', 'arrival.js', 'calls.js', 'update.js', 'spans.js', 'views.js', 'pictures.js', 'markdown.js', 'symbols.js', 'motion.js', 'drag-target.js', 'transform.js', 'svg-transform.js', 'dataset.js', 'format.js', 'hatches.js', 'arrange.js', 'reorder.js', 'flow.js', 'native.js', 'shared.js']) cpSync(resolve(here, f), resolve(gen, f));
 writeFileSync(resolve(gen, 'modules.js'), localImports(readFileSync(resolve(here, 'modules.js'), 'utf8')));
 // The web host's own pieces the runtime loads (glue.mjs).
 stageHostGlue(root, gen);
@@ -545,13 +545,14 @@ cpSync(resolve(here, 'midi.js'), resolve(gen, 'midi.js'));
 writeFileSync(resolve(gen, 'main-server.js'), [
   `import app${rust ? ', { sources }' : ''} from './app.js';`,
   ...(soundTable ? [`import { install as sounds } from './sounds.js'; sounds(${soundTable});`] : []),
-  "import { data, clock, inflight, Resources, Mutations, routeAt, Head } from './rt.js';",
-  "import { types, sourceTypes, pages, viewportMedia, activation } from './names.js';",
+  "import { data, clock, inflight, Resources, Mutations, routeAt, Head, canSetStatus, unfinishedAnswers } from './rt.js';",
+  "import { types, sourceTypes, pages, viewportMedia, activation, markdownPaths } from './names.js';",
+  ...(existsSync(resolve(gen, 'markdown.flag')) ? ["import { compileReaders } from './markdown.js';", 'globalThis.__markdown = () => compileReaders(markdownPaths, Resources);'] : []),
   "import { viewportFacts } from './facts.js';",
   "import { answers } from './checkpoint.js';",
   "import { markBars } from './navigation.js';",
   "import { markRoutes, markDocument } from './document.js';",
-  ...(ts ? ["import { install as ts } from './ts-data.js';", "import { answering } from './ts-fetch.js'; import { heldReply, looseFetch } from './held.js'; Object.assign(answering, { loose: looseFetch, heldReply });"] : []),
+  ...(ts ? ["import { install as ts } from './ts-data.js';", "import { answering, unfinishedIO } from './ts-fetch.js'; import { heldReply, looseFetch } from './held.js'; Object.assign(answering, { loose: looseFetch, heldReply });"] : []),
   ...(rust ? ["import { install } from './rust-data.js';"] : []),
   // Two steps, so a server can send the page's head between them
   // (render.mjs): the app starts and names its route, then settles.
@@ -563,11 +564,13 @@ writeFileSync(resolve(gen, 'main-server.js'), [
   '  app();',
   '  route = routeAt(location.pathname + location.search);',
   '  const [render, activate] = pages[route] ?? ["build", "inferred"];',
-  '  return { activate: ["idle", "interaction", "never"].includes(activate) ? activate : "inferred", policy: render, notfound: !!pages[route]?.[2], readsViewport: activation.viewport };',
+  '  return { activate: ["idle", "interaction", "never"].includes(activate) ? activate : "inferred", policy: render, notfound: !!pages[route]?.[2], readsViewport: activation.viewport, canSetStatus: canSetStatus() };',
   '};',
-  'globalThis.__render = async deadline => {',
+  'globalThis.__render = async (deadline, waitStatus = true) => {',
   '  const end = t0 + deadline;',
-  '  do await new Promise(r => setTimeout(r, 1)); while (inflight.n && performance.now() < end);',
+  `  const unfinished = () => unfinishedAnswers()${ts ? ' || unfinishedIO()' : ''};`,
+  '  const outstanding = () => inflight.n > 0 || Resources.some(r => r.waiting) || (waitStatus && unfinished());',
+  '  do await new Promise(r => setTimeout(r, 1)); while (outstanding() && performance.now() < end);',
   '  markBars(document.getElementById("exact-root")); // the bars the glue marks, so their symbols are the size they will be',
   '  markRoutes(document.getElementById("exact-root")); markDocument(); // a hidden route\'s page scroller is off the page',
   '  return { root: document.rootHTML(), title: Head.headTitle, description: Head.headDescription, image: Head.headImage, canonical: Head.headCanonical, robots: Head.headRobots,',
@@ -575,7 +578,7 @@ writeFileSync(resolve(gen, 'main-server.js'), [
   `    origin: ${JSON.stringify(manifest.app?.origin ?? null)}, status: Head.headStatus ?? null, time: clock.now, answers: answers(Resources, types[2], sourceTypes),`,
   // Each resource whose source failed, with its message: the server's log names it (render.mjs), as the page cannot.
   '    failed: Resources.filter(r => r.failed).map(r => `${r.name}: ${r.error}`),',
-  '    pending: Resources.filter(r => r.ticket).map(r => r.name), scrollDocument: document.documentElement.hasAttribute("data-scrolldocument"), render: performance.now() - t0,',
+  '    pending: Resources.filter(r => r.ticket).map(r => r.name), outstanding: outstanding(), continuing: unfinished(), scrollDocument: document.documentElement.hasAttribute("data-scrolldocument"), render: performance.now() - t0,',
   // What an inferred activation reads (LLP 1048.007 D1): what is still due, the sources read, the viewport's comparisons as the render saw them.
   '    due: clock.timers.length > 0 || Mutations.some(m => m.due < Infinity || m.next < Infinity), activation, zoned: !!globalThis.__exactZone,',
   // Only a TypeScript source is held to no clock and no Math.random (ts-fetch.js): a Rust module's page is never kept.
@@ -655,15 +658,16 @@ const bundle = async (options) => {
   if (!r.success) process.exit(1);
 };
 // The renderer uses vm.Script, which cannot parse import.meta.
-if (how !== 'none') await bundle({ entrypoints: [resolve(gen, 'main-server.js')], format: 'iife', outdir: gen, naming: 'server.js',
-  define: { ...bundleOptions.transform.define, 'import.meta.url': JSON.stringify(pathToFileURL(resolve(out, 'app.js')).href) } });
+const markdownReaders = existsSync(resolve(gen, 'markdown.flag'));
+if (how !== 'none' || markdownReaders) await bundle({ entrypoints: [resolve(gen, 'main-server.js')], format: 'iife', outdir: gen, naming: 'server.js',
+  define: { ...bundleOptions.transform.define, 'globalThis.__exactRender': 'true', 'import.meta.url': JSON.stringify(pathToFileURL(resolve(out, 'app.js')).href) } });
 // The page's module and its chunks: Rolldown, the repo's app bundler, whose
 // minifier leaves the entry 6–10% smaller than Bun's after brotli (RealWorld
 // 25.8 → 23.6 KB, the feed bench's 30.9 → 27.9, the grid's 19.3 → 18.1),
 // bytes a page downloads before its runtime is up.
 {
   const { rolldown } = await import('rolldown');
-  const b = await rolldown({ input: resolve(gen, 'main.js'), transform: bundleOptions.transform, plugins: [...(replay ? [replay.rolldown] : []), { name: 'exact-mounts', resolveId: (source, importer) => mounted(source, importer) }, { name: 'source-grants', transform: (code, id) => scopedModule(code, id, true) }, asyncContext()], logLevel: 'warn', onLog: (level, log) => {
+  const b = await rolldown({ input: resolve(gen, 'main.js'), transform: { ...bundleOptions.transform, define: { ...bundleOptions.transform.define, 'globalThis.__exactRender': 'false' } }, plugins: [...(replay ? [replay.rolldown] : []), { name: 'exact-mounts', resolveId: (source, importer) => mounted(source, importer) }, { name: 'source-grants', transform: (code, id) => scopedModule(code, id, true) }, asyncContext()], logLevel: 'warn', onLog: (level, log) => {
     if (level === 'warn' && log.code === 'IMPORT_IS_UNDEFINED' && optionalHookWarning(log.id, log.message)) return;
     console.error(log.message);
   } });
@@ -877,6 +881,20 @@ cpSync(resolve(out, 'index.html'), resolve(out, 'shell.html'));
   const { planRouteTable } = await import('../web/serve.mjs');
   const routes = planRouteTable(readFileSync(resolve(out, 'app.plan'))).map(({ name, pattern, render, notfound }) => ({ name, pattern, render, notfound }));
   writeFileSync(resolve(out, 'routes.json'), JSON.stringify({ routes }, null, 2) + '\n');
+}
+// Compile known reader text even when the development build emits only a shell.
+if (markdownReaders) {
+  const { renderer } = await import('./render.mjs');
+  const prepared = await renderer(out, { closed: true }).markdown();
+  if (prepared.length) {
+    const data = JSON.stringify(prepared).replace(/</g, '\\u003c');
+    const tag = `<script type="application/vnd.exact.markdown">${data}</script>`;
+    for (const file of ['index.html', 'shell.html']) {
+      const path = resolve(out, file);
+      writeFileSync(path, readFileSync(path, 'utf8').replace('<script type="module"', tag + '<script type="module"'));
+    }
+    console.log(`${app}: ${prepared.length} Markdown sources compiled`);
+  }
 }
 if (pages.length && !opt('--render') && !renderAt) console.log(`${app}: no ${renderBin} entry, so its pages render under Bun (--render js)`);
 if (pages.length && how === 'rust') {

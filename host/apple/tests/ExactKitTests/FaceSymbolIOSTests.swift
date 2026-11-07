@@ -294,7 +294,7 @@ final class FaceSymbolIOSTests: XCTestCase {
     @MainActor private func ink(_ button: UIButton, in w: UIWindow) throws -> [CGFloat] {
         w.layoutIfNeeded(); button.layoutIfNeeded()
         let view = try XCTUnwrap(button.imageView)
-        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false
         let shot = UIGraphicsImageRenderer(bounds: w.bounds, format: format).image { _ in w.drawHierarchy(in: w.bounds, afterScreenUpdates: true) }
         let at = view.convert(CGPoint(x: view.bounds.midX, y: view.bounds.midY), to: w)
         // The ground (the window's corner) is the window's colour: a drawing, not a blank capture.
@@ -308,6 +308,7 @@ final class FaceSymbolIOSTests: XCTestCase {
         let ctx = try XCTUnwrap(CGContext(data: &px, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
                                           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         ctx.draw(try XCTUnwrap(shot.cgImage), in: CGRect(x: -floor(at.x), y: floor(at.y) - w.bounds.height + 1, width: w.bounds.width, height: w.bounds.height))
+        XCTAssertTrue([ground, px].allSatisfy { CapturePixels.painted($0, at: 0) }, "the window and symbol samples are painted")
         return px.prefix(3).map { CGFloat($0) / 255 }
     }
 
@@ -393,9 +394,9 @@ final class FaceSymbolGroupedTests: GroupedListFixture {
     func testAPathRowIsLaidOutAndTintedAsASymbolsRow() throws {
         let (_, reply, bell) = try cells { self.pathModel() }
         let c = try XCTUnwrap(reply.contentConfiguration as? UIListContentConfiguration)
-        XCTAssertEqual(c.image?.renderingMode, .alwaysTemplate)
+        XCTAssertEqual(c.image?.renderingMode, .alwaysOriginal, "drawn in its colour, which UIKit draws as it is")
         XCTAssertEqual(c.imageProperties.reservedLayoutSize.width, UIListContentConfiguration.ImageProperties.standardDimension)
-        let label = try XCTUnwrap(c.imageProperties.tintColor, "untinted, the label colour, as a symbol takes it")
+        let label = try XCTUnwrap((reply as? GroupedCell)?.imageInk, "untinted, the label colour, as a symbol takes it")
         XCTAssertEqual(label.resolvedColor(with: reply.traitCollection), UIColor.label.resolvedColor(with: reply.traitCollection))
         func titleX(_ cell: UICollectionViewListCell, _ text: String) throws -> CGFloat {
             cell.layoutIfNeeded()
@@ -405,9 +406,9 @@ final class FaceSymbolGroupedTests: GroupedListFixture {
         }
         XCTAssertEqual(try titleX(reply, "Reply"), try titleX(bell, "Notifications"), accuracy: 0.5, "the titles align as beside a symbol")
         // A destructive row's path is red, a disabled one's grey, as a symbol's.
-        let red = try XCTUnwrap((try cells { self.pathModel(destructive: true) }.1.contentConfiguration as? UIListContentConfiguration)?.imageProperties.tintColor)
+        let red = try XCTUnwrap((try cells { self.pathModel(destructive: true) }.1 as? GroupedCell)?.imageInk)
         XCTAssertEqual(red.resolvedColor(with: reply.traitCollection), UIColor.systemRed.resolvedColor(with: reply.traitCollection))
-        let grey = try XCTUnwrap((try cells { self.pathModel(disabled: true) }.1.contentConfiguration as? UIListContentConfiguration)?.imageProperties.tintColor)
+        let grey = try XCTUnwrap((try cells { self.pathModel(disabled: true) }.1 as? GroupedCell)?.imageInk)
         XCTAssertEqual(grey.resolvedColor(with: reply.traitCollection), UIColor.tertiaryLabel.resolvedColor(with: reply.traitCollection))
     }
 
@@ -429,7 +430,7 @@ final class FaceSymbolGroupedTests: GroupedListFixture {
             ["op": "children", "id": 10, "ids": [31, 33]],
         ]))
         let row = try cell(p, 10)
-        XCTAssertNil((row.contentConfiguration as? UIListContentConfiguration)?.imageProperties.tintColor, "the accent is the cell's tint", file: file, line: line)
+        XCTAssertNil((row as? GroupedCell)?.imageInk, "the accent is the cell's tint", file: file, line: line)
         let light = UITraitCollection(userInterfaceStyle: .light)
         func shown() throws -> UIColor {
             row.layoutIfNeeded()

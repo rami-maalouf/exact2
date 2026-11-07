@@ -3,8 +3,8 @@
 // library (cargo, release), then the presenter (swift build) linked against
 // it. Usage:
 //   bun host/apple/build.mjs [crate=caltrain-apple] [--run]                 macOS (--run assembles and launches the .app)
-//   bun host/apple/build.mjs [crate] --test                                  the Swift host tests
-//   bun host/apple/build.mjs [crate] --test --ios [--sim <udid|name>]        all tests compiled for UIKit on a simulator
+//   bun host/apple/build.mjs [crate] --test [--only <Class,…>]               the Swift host tests, or only the classes named
+//   bun host/apple/build.mjs [crate] --test --ios [--sim <udid|name>] [--only <Class,…>]  the tests compiled for UIKit, or only the classes named, on a simulator
 //   bun host/apple/build.mjs --ios [crate] [--run] [--sim <udid|name>]        iOS, on a simulator
 //   bun host/apple/build.mjs --tvos [crate] [--run] [--sim <udid|name>]       tvOS, on an Apple TV simulator
 //   bun host/apple/build.mjs --tvos --device [crate] [--run] [--archive <out.ipa>]  tvOS, on an Apple TV
@@ -55,31 +55,32 @@ import { composedModule, moduleSeam, systemFrameworks } from './compose.mjs';
 import { associatedDomains, entitlementValue, macPresence, macPasskeys, macProfileRows, merchantEntitlement, signInEntitlement } from './presence.mjs';
 import { writeDataKeys } from './data-keys.mjs';
 import { backgroundKeys, localNetworking, nfcKeys, startLocation, transportSecurity, updateActivation } from './plist.mjs';
-import { compileFixtures, iosTestRuns, macTests } from './xctest.mjs';
+import { compileFixtures, iosTestRuns, macTests, onlyClasses } from './xctest.mjs';
 import { appIcon, buildInfo, iosAssets, appleAssets, appleAssetCatalogInventory, copyMacResources, signingOrder, helperEntitlements, plistFile, wrapFramework, signedGpuProduct, assertArchiveFrameworks } from './assets.mjs';
 import { keptModules } from './modules.mjs';
 import { appleLinkArgs, embedLibrary, prepareLibrary, xcframeworkSlice } from '../../scripts/package-libraries.mjs';
 import { quiet, quietFor } from './quiet.mjs';
 import { keptCrates } from './crates.mjs';
+import { appleCargo } from '../../scripts/cargo-check.mjs';
 import { linkedPlanArgs, placeLinkedPlan } from '../../scripts/linked-plan.mjs';
 import { appleComposition, assertCapabilityFrameworks, assertLinkedSdk, linksByPlan } from './link.mjs';
 export { appIcon, iosAssets, documentTypes, exportedTypes, importedTypes };
 import { IPAD_ORIENTATIONS, orientationKeys, allows, deviceLaunchArgs, developmentLaunchEnvironment, identity, installedBuild, macIdentity, phone, replacedNote, profile, showSimulator, simulator, simulators, useXcode } from './devices.mjs';
 const root = resolve(new URL('../..', import.meta.url).pathname);
 const run = (cmd, args, opts = {}) => {
-  const r = spawnSync(cmd, args, { cwd: root, ...opts,
-    stdio: opts.stdio === 'ignore' ? ['ignore', 'ignore', 'pipe'] : opts.stdio ?? 'inherit' });
+  const r = spawnSync(...appleCargo(cmd, args, { cwd: root, ...opts,
+    stdio: opts.stdio === 'ignore' ? ['ignore', 'ignore', 'pipe'] : opts.stdio ?? 'inherit' }));
   if (r.status !== 0) throw new Error(`${cmd} failed (${r.status ?? r.error?.message})${r.stderr?.length ? ': ' + String(r.stderr).trim() : ''}`);
   return r;
 };
-const read = (cmd, args, opts = {}) => spawnSync(cmd, args, { cwd: root, encoding: 'utf8', ...opts });
+const read = (cmd, args, opts = {}) => spawnSync(...appleCargo(cmd, args, { cwd: root, encoding: 'utf8', ...opts }));
 // Every Apple toolchain invocation goes through here — cargo, swift build, and
 // the webarm swiftc alike: a mixed deployment target or an incompatible sysroot
 // is a warning the toolchain prints and then links anyway, so the build fails on
 // it here instead. @ref LLP 1008
 const runApple = (cmd, args, opts = {}) => {
   const { cargoMessages = false, ...spawnOptions } = opts;
-  const r = spawnSync(cmd, args, { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, ...spawnOptions });
+  const r = spawnSync(...appleCargo(cmd, args, { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, ...spawnOptions }));
   if (!cargoMessages) process.stdout.write(quiet(r.stdout ?? ''));
   process.stderr.write(quiet(r.stderr ?? ''));
   if (r.status !== 0) throw new Error(`${cmd} failed (${r.status ?? r.error?.message})`);
@@ -100,7 +101,7 @@ const refuseMixedTargets = (cmd, args, output) => {
  * says its own failure. A build that ends early stops it. `authored` restores paths in the log (`snapshotSources`). */
 function startApple(cmd, args, log, { authored, ...opts } = {}) {
   const out = openSync(log, 'w');
-  const child = spawn(cmd, args, { cwd: root, ...opts, stdio: ['ignore', out, out] });
+  const child = spawn(...appleCargo(cmd, args, { cwd: root, ...opts, stdio: ['ignore', out, out] }));
   closeSync(out);
   const exited = new Promise((settle) => {
     child.once('error', (error) => settle({ status: null, error }));
@@ -888,8 +889,7 @@ async function main(args, lockHeld = false) {
     const started = Date.now(), compile = crates.filter(crate => !(moduleLib[crate] = kept?.find(crate)));
     for (const crate of compile) moduleLib[crate] = resolve(moduleLibDir, `lib${crate.replaceAll('-', '_')}.dylib`);
     if (compile.length) keptRegistry?.take(moduleTarget, 'modules');
-    const step = compile.length ? startApple('sh', ['-c', 'profile=$1 target=$2 dir=$3 manifest=$4; shift 4; for crate; do cargo build --profile "$profile" -p "$crate" --lib --target "$target" --target-dir "$dir" --manifest-path "$manifest" || exit $?; done',
-      'host-modules', cargoProfile, target, moduleTarget, resolve(root, 'Cargo.toml'), ...compile], resolve(webBuildDir, log), { env: moduleEnv }) : null;
+    const step = compile.length ? startApple('cargo', ['build', '--profile', cargoProfile, ...compile.flatMap(crate => ['-p', crate]), '--lib', '--target', target, '--target-dir', moduleTarget, '--manifest-path', resolve(root, 'Cargo.toml')], resolve(webBuildDir, log), { env: moduleEnv }) : null;
     if (step) beside.push(step);
     return { async done() { await step?.done(); for (const crate of compile) kept?.keep(crate, started); if (compile.length) keptRegistry?.keep(moduleTarget, 'modules', resolve(root, 'Cargo.lock')); } };
   };
@@ -1393,10 +1393,12 @@ async function main(args, lockHeld = false) {
  *  `--ios`, all tests compiled for UIKit through xcodebuild on a
  *  simulator: `--sim`/EXACT_SIM, else one that is not running (another
  *  session may be driving a booted one), shut down again only if booted here.
- *  Swift availability guards decide which shared methods run on iOS. */
+ *  Swift availability guards decide which shared methods run on iOS. `--only`
+ *  runs the test classes it names (`onlyClasses`). */
 async function test(args) {
   const ios = args.includes('--ios');
-  const app = resolveApp(args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--sim'));
+  const app = resolveApp(args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--sim' && args[i - 1] !== '--only'));
+  const only = args.includes('--only') ? onlyClasses(args, resolve(root, 'host/apple/tests/ExactKitTests'), ios ? 'iOS' : 'macOS') : null;
   app.prepare?.();
   const crate = app.crate(ios ? 'ios' : 'macos');
   const release = appleBuildLock(app);
@@ -1443,7 +1445,7 @@ async function test(args) {
       compileFixtures(root, run, env, paths.namespace, 'EXACT', app.id);
       const swiftEnv = { ...env, MACOSX_DEPLOYMENT_TARGET: '14.0' }, scratch = resolve(paths.namespace, 'tests');
       runApple('swift', ['build', '--build-tests', '--scratch-path', scratch], { cwd: pkg, stdio: 'inherit', env: swiftEnv });
-      return await macTests(pkg, scratch, swiftEnv, canvasGpu);
+      return await macTests(pkg, scratch, swiftEnv, canvasGpu, only);
     }
     // The fixture's plan and hatch module (LLP 1075.003 §3.9), built for the
     // tests' simulator so they run its hatches over its routes: the glue, its
@@ -1475,7 +1477,7 @@ async function test(args) {
     try {
       const destination = `platform=iOS Simulator,id=${dev.udid}`, derived = resolve(paths.namespace, 'ios-tests'), xcodeEnv = { ...env, IPHONEOS_DEPLOYMENT_TARGET: '17.0' };
       runApple('xcodebuild', ['build-for-testing', '-scheme', 'Exact-Package', '-destination', destination, '-derivedDataPath', derived], { cwd: pkg, stdio: 'inherit', env: xcodeEnv });
-      iosTestRuns({ pkg, products: resolve(derived, 'Build/Products'), destination, udid: dev.udid, env: xcodeEnv, canvasGpu, hostSource: resolve(root, 'host/apple/testhost/TestHost.swift'), triple: iosTriple, runApple, run });
+      iosTestRuns({ pkg, products: resolve(derived, 'Build/Products'), destination, udid: dev.udid, env: xcodeEnv, canvasGpu, hostSource: resolve(root, 'host/apple/testhost/TestHost.swift'), triple: iosTriple, runApple, run, only });
     } finally { if (bootedHere) read('xcrun', ['simctl', 'shutdown', dev.udid]); }
   } finally { cargoRelease?.(); release(); }
 }

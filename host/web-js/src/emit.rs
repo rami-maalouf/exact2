@@ -1,6 +1,5 @@
 //! The plan's tables → one ES module.
-//!
-//! Module shape (every name local, the bundler minifies):
+//! Module shape:
 //! slots `s_i = sig(init)`, derives `d_i = memo(body)`, resources
 //! `r_i = res(source, args, compiled value, compiled args)`, actions
 //! `a_i = act(body)` (writes land at commit, as the VM's `StoreSlot`
@@ -19,10 +18,14 @@ use std::fmt::Write as _;
 
 #[path = "answers.rs"]
 mod answers;
+#[path = "each.rs"]
+mod each;
 #[path = "list_options.rs"]
 mod list_options;
 #[path = "lower.rs"]
 pub(crate) mod lower;
+#[path = "markdown.rs"]
+mod markdown;
 #[path = "motion.rs"]
 mod motion;
 #[path = "named_records.rs"]
@@ -242,7 +245,7 @@ pub fn emit(plan: &Plan, site_attrs: bool, dev_reload: bool) -> Result<Output, S
     let mut em = Em {
         plan,
         sites: &sites,
-        answers: answers::Answers::new(plan),
+        answers: answers::Answers::new(plan, &sites),
         parts,
         uses: Uses::default(),
         out: String::new(),
@@ -399,6 +402,10 @@ pub fn emit(plan: &Plan, site_attrs: bool, dev_reload: bool) -> Result<Output, S
             let f = code::expression(plan, plan.code(plan.arg(a).expr), &top, &mut em.uses)
                 .map_err(|e| format!("resource {}: {e}", plan.str(r.name)))?;
             args.push(f);
+        }
+        if let Some(each) = each::resource(plan, i, &args, &top, &mut em.uses)? {
+            body.push_str(&each);
+            continue;
         }
         // What it shows while it waits with nothing kept (LLP 1048.003 D6,
         // 1054.000.002): an `else source()` row's value, a declared
@@ -733,11 +740,12 @@ pub fn emit(plan: &Plan, site_attrs: bool, dev_reload: bool) -> Result<Output, S
         })
         .collect();
     let names_js = format!(
-        "{names_js}export const sourceTypes={{{}}};export const pages=[{}];export const viewportMedia={};export const activation={};\n",
+        "{names_js}export const sourceTypes={{{}}};export const pages=[{}];export const viewportMedia={};export const activation={};export const markdownPaths={};\n",
         source_types.join(","),
         pages.join(","),
         crate::facts::viewport_media(plan),
-        crate::facts::activation(plan)
+        crate::facts::activation(plan),
+        serde_json::to_string(&em.uses.markdown_paths).unwrap()
     );
     let imports: Vec<String> = em.uses.names.iter().cloned().collect();
     let budget: Vec<String> = em.uses.budget.iter().cloned().collect();
@@ -1229,11 +1237,9 @@ impl Em<'_> {
                 continue;
             }
             if let Some(v) = style::literal(plan, plan.code(b.expr)) {
-                // A literal source is built into pieces too, once: left as a
-                // constant it painted nothing (notes diary's link repro).
                 if markdown && b.kind == BindingKind::Prop && b.id == PropId::Text as u16 {
                     let source = serde_json::to_string(v.as_str().unwrap_or_default()).unwrap();
-                    self.markdown(&e, &format!("()=>{source}"));
+                    self.markdown(i, &e, &format!("()=>{source}"), plan.code(b.expr));
                 }
                 continue;
             }
@@ -1245,7 +1251,7 @@ impl Em<'_> {
             self.paint_binding(node_type, &b, &e, &f);
             match b.kind {
                 BindingKind::Prop if markdown && b.id == PropId::Text as u16 => {
-                    self.markdown(&e, &f)
+                    self.markdown(i, &e, &f, plan.code(b.expr))
                 }
                 BindingKind::Prop if b.id == PropId::Dataset as u16 => self.dataset(&e, &f),
                 BindingKind::Prop => {

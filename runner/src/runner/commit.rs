@@ -1,6 +1,5 @@
-//! Commits: an action, a timer's action, a request's reply — each one
-//! transaction that settles, updates the tree and applies one batch, or
-//! refuses and leaves the kernel as it was.
+//! An action, timer or request reply commits one transaction: settle, update
+//! the tree and apply one batch, or refuse and leave the kernel as it was.
 
 use super::*;
 
@@ -11,10 +10,9 @@ fn too_long(value: &Value) -> bool {
         .is_some_and(|s| s.len() > crate::vm::MAX_STRING)
 }
 
-/// Everything a refused commit leaves as it was (§6 atomicity): state, the
-/// store, the request book-keeping, and the flags a settlement pass sets on
-/// its way — a deferred resource's staleness, store provenance, and the
-/// refreshes an action asked for.
+/// A refused commit restores state, store and request bookkeeping (§6 atomicity),
+/// including settlement flags: deferred resource staleness, store provenance,
+/// and refreshes requested by an action.
 pub(super) struct Checkpoint {
     store: crate::store::StoreCheckpoint,
     /// How many let-go requests with effects were collected before it.
@@ -49,6 +47,7 @@ pub(super) struct Checkpoint {
     origins: super::modules::OriginsSaved,
     /// The arguments refused a child's resource (LLP 1133.007 D13).
     refused_args: super::modules::Refused,
+    gone: Vec<bool>, // which elements of resources over lists had left (`each.rs`)
 }
 
 /// What a settlement publishes that a refusal after it — the gate step
@@ -127,6 +126,7 @@ impl<D: DataSource> Runner<D> {
             origins: self.origins_saved(),
             refused_args: self.refused_saved(),
             letting: self.letting_len(),
+            gone: self.gone_members(),
         }
     }
 
@@ -217,6 +217,7 @@ impl<D: DataSource> Runner<D> {
                         self.discard_request(&r.request);
                     }
                 }
+                self.restore_members(&c.gone);
                 self.sync_pending_flags();
                 self.commands.truncate(c.commands);
                 // A refusal the restore undid is not said.
@@ -938,6 +939,7 @@ impl<D: DataSource> Runner<D> {
             ask_again: false,
             module_again: None,
             effects: request.has_effects(),
+            replay_unsafe: request.has_effects(),
             origin: self.writes.tick(),
             write: match target {
                 Target::Mutation(m) => self.asked_write(m),
@@ -969,30 +971,6 @@ impl<D: DataSource> Runner<D> {
         // commit, or a worker's turn that landed late) names it now.
         self.match_aborts();
         self.sync_pending_flags();
-    }
-
-    pub(super) fn sync_pending_flags(&mut self) {
-        self.pending_res = vec![false; self.plan.resources.len()];
-        self.pending_mut = vec![false; self.plan.mutations.len()];
-        // A stream is pending until its first message (LLP 1016.000 D1).
-        for p in self.pending.iter().filter(|p| p.in_flight()) {
-            match p.target {
-                Target::Resource(i) => self.pending_res[i] = true,
-                Target::Mutation(m) => self.pending_mut[m] = true,
-            }
-        }
-        // A queue's waiting send is pending too (LLP 1092 D4).
-        for m in 0..self.pending_mut.len() {
-            self.pending_mut[m] |= self.queues.waits(m);
-        }
-        // A placeholder shown until the source can answer is pending too,
-        // and so is a send waiting for it.
-        for (i, awaiting) in self.awaiting.iter().enumerate() {
-            self.pending_res[i] |= *awaiting;
-        }
-        for (m, ..) in &self.unsent {
-            self.pending_mut[*m] = true;
-        }
     }
 
     /// The requests the host is to run since the last take (LLP 1016 D2).
@@ -1431,6 +1409,7 @@ impl<D: DataSource> Runner<D> {
                     next.write = p.write;
                     next.reasks = p.reasks;
                     next.effects |= next.continuation.is_some() && effects;
+                    next.replay_unsafe |= p.replay_unsafe;
                 }
                 return self.update();
             }

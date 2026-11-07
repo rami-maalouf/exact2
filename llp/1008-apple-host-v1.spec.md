@@ -125,8 +125,8 @@ width-specific snapshot — the wrapped `CTLine`s from a `CTTypesetter`, each
 line's baseline from the top, and its layout dimensions — cached by `(spec,
 width)`. An authored line height retains the fractional sum of its line boxes,
 including clamped paragraphs. Empty text has no line box, so its intrinsic height is zero.
-Intrinsic width and `normal` paragraph height retain their existing whole-point
-ceiling: changing those measurements
+Intrinsic width retains its 1/64 px layout unit and a `normal` paragraph
+height its ceiling to a whole device pixel (below): changing those measurements
 requires a separate wrapping/host-parity comparison. The measure callback answers
 from the paragraph, and `NodeView.draw` paints those same lines: one `CTLineDraw`
 per line, flush by alignment inside the CSS content box. Borders and padding
@@ -138,9 +138,46 @@ AppKit and UIKit, through the paragraph's viewport conversion (LLP 1051.000
 D1). Collapsed whitespace at a soft wrap contributes no width to that union. The padded
 paragraph/container comparison, padding mutation and recreation, and Messages
 quoted replies and empty results are recorded in `/tmp/messages-text-padding/`.
-Painting still snaps baselines to the logical point
-grid, independently of the reported fractional baseline; that remaining raster
-placement difference is separate from an authored line box's height.
+**The line box is rounded in device pixels on the Mac** (2026-11-04,
+Daehyeon's ruling that clone text not sit up to a device pixel off Chrome's on
+a Retina Mac). Chrome rounds a face's ascent and descent, floors the
+half-leading and ceils a `normal` paragraph's height in device pixels, so at
+device scale 2 a 14 px `normal` line is 16.5 tall with its baseline at 13.5,
+where at scale 1 it is 17 and 14 (`CSSLineBox`). The engine rounds at its
+`lineScale`: the Mac presenter sets it to the window's `backingScaleFactor`
+times the page zoom (LLP 1021 §5.3.1, as Chromium's device scale is under a
+page zoom) before the first layout, and when the window moves to a display
+of another scale or the zoom changes it sets it again, which drops what the engine measured and has the
+kernel measure every paragraph again (`exact_text_scale_changed`,
+`Kernel::remeasure_text`). A paragraph paints each baseline on the device
+pixels its line box was rounded to (`Paragraph.lineScale`), so on a 2x Mac a
+baseline can sit on a half point; a textarea's lines and the agent's range
+frames follow the same box. A headless session and a 1x display keep scale 1:
+whole points, as before, so a headless test lays text out the same on any
+machine; the agent driving a Mac app sees its window's scale. A single-line
+input's line box rounds the same way (2026-11-04, Daehyeon's ruling "fix it;
+it is plain CSS"): `NSTextFieldCell` sets its baseline the font's ascent,
+rounded to a point, below its title rect's top, so the rect's top is the
+CSS baseline less that ascent, on a half point where the baseline is.
+Not changed: iOS, which keeps scale-1 line boxes and device-pixel baselines;
+the Linux and Windows hosts. Those are decided separately.
+`TextParityMacTests` holds Chrome 156's numbers at both scales.
+**Every box is drawn on the device's pixel grid on the Mac** (2026-11-04,
+Daehyeon's ruling "build it"), as on iOS since `e79cd153f2`. Layout's frames
+are fractional (LLP 1001 §6); a view drawn where its frame fell left its layer
+a fraction of a device pixel off the grid, and Core Animation blended its
+edges and its text across two device rows. Chromium rounds each painted box's
+edges half up at their absolute positions (`PhysicalRect::PixelSnappedIntRect`),
+and so does the presenter: each node view keeps its absolute layout origin and
+its drawn origin in whole device pixels, a device pixel being the backing scale
+times the page zoom (`PixelGridMac.swift`). A box a host places (a dialog in
+the top layer, a popover, a table row in its cell) is an origin of its own.
+Text, fields and collections measure at layout's size (`layoutBounds`); a
+scroller's extent ends on its last edge's pixel. A paragraph is placed from
+where layout put its box, and each baseline rounds at its place on the page,
+as Chromium rounds a glyph run's (`TextEngine.paintedLine`), not in a content
+box that padding leaves off the grid: a 17.875 px line in a `pre` with 12.8 px
+of padding sat a device pixel low. `PixelGridMacTests`.
 The macOS paragraph raster includes glyph ink outside that layout box. Overflow
 uses a positioned child layer, preserving descenders and italic overhang without
 changing layout; authored clipping still applies. Fitting ink stays on the
@@ -305,10 +342,25 @@ the same rows as `input`. Contract lowers it to `TextInput` with the existing
 HTML `readonly` lowers to the inverse of the existing `editable` prop,
 keeping the text selectable while refusing edits. The app gives this bounded
 editor its width and height; rich text is outside this control.
-UIKit textarea line spacing uses the authored `line-height` through paragraph
-minimum/maximum heights; clearing it restores TextKit's natural spacing. Storage
-and typing attributes update in place, preserving text and selection. TextKit's
-baseline within each box still differs from CoreText's centered CSS baseline.
+A textarea's lines (AppKit and UIKit, plain and Markdown) are the authored
+`line-height` apart with each baseline where CoreText's CSS line box puts it
+(2026-11-03, Daehyeon's ruling that the T3 Code composer's typed text not sit
+below the browser's). TextKit puts all of a forced line's leading above its
+glyphs, so the paragraph's minimum and maximum height end the line the font's
+descent (AppKit rounds it to a point, UIKit does not) below the CSS baseline,
+and the rest of the line height is TextKit's line spacing, which it sets
+between lines (`NSMutableParagraphStyle.setLineHeight`). The caret, marked text
+and the placeholder follow those lines; a line's selection runs from the line
+above's descent to its own. TextKit's content ends at the last line's descent,
+its lower half-leading short of the kernel's box: scrolled to its end, a
+textarea shows its last line that much nearer its bottom edge than a browser
+does. Two cases keep TextKit's placement. A `line-height` below the font's
+content area is forced as it is (TextKit 2 sets a negative spacing between
+some paragraphs and not others), its glyphs up to a point higher than CSS's.
+A line holding a run of a larger descent than the field's font (an emoji)
+sits higher by the difference, where CSS keeps the field font's baseline.
+Clearing `line-height` restores TextKit's natural spacing. Storage and typing
+attributes update in place, preserving text and selection.
 `field-sizing="content"` (2026-09-09, Messages) instead measures the current
 value/placeholder, constrained by CSS min/max dimensions. Fixed controls use a
 preferred size independent of value; explicit dimensions still win. The browser

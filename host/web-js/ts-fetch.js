@@ -33,9 +33,13 @@ export function fetch(input, options) {
  * its answer (`call.plain`), so the answer is never held while it is out (LLP 1016.000 D9). */
 export const ordinary = start => counting('plain', start);
 globalThis.__exact_ordinary = ordinary; // for host modules ts-fetch.js does not reach (auth.js)
+// A render waits for I/O even after its source returns a value or its answer Promise settles.
+let RenderIO = 0;
+export const unfinishedIO = () => RenderIO > 0;
 function counting(kind, start) {
+  if (globalThis.__exactRender) RenderIO++;
   const call = answering.call;
-  const end = () => { if (call) { call[kind]--; if (kind === 'held') answering.heldReply(call); call.recount?.(); } else answering.loose(-1); };
+  const end = () => { if (globalThis.__exactRender) RenderIO--; if (call) { call[kind]--; if (kind === 'held') answering.heldReply(call); call.recount?.(); } else answering.loose(-1); };
   if (call) { call[kind] = (call[kind] ?? 0) + 1; call.recount?.(); } else answering.loose(1);
   let out;
   try { out = start(); } catch (e) { end(); throw e; }
@@ -82,7 +86,8 @@ function captured(options) {
 }
 // The origin a fetch carries (LLP 1133.036 D6): its answer's, or, after the answer's first await, where no call is
 // traced, the least privileged of the answers in flight (LLP 1133.002 D12).
-export const fetchOrigin = () => answering.call?.origin ?? ([...answering.untraced].find(c => !c.settled)?.origin ?? 'app');
+export const activeCall = () => answering.call ?? [...answering.untraced].find(c => !c.settled);
+export const fetchOrigin = () => activeCall()?.origin ?? 'app';
 function fetchOf(input, options, call) {
   if (options?.exactStream === undefined && options?.exactBodyFrom === undefined && options?.exactBodyTo === undefined) return fetchWith(tsGrantSet, input, options, null, undefined, undefined, fetchOrigin());
   if (options.exactStream !== undefined && options.exactBodyTo !== undefined) return Promise.reject(new TypeError("exactBodyTo: a stream's body is its messages, not a file"));
@@ -206,7 +211,7 @@ export function dropTimers(call, gone) { for (const [id, armed] of Armed) if (ar
 // the event cannot keep the request from ending, as none can keep a browser's fetch from ending (DOM, "signal abort":
 // a dependent signal's event is its own); `signal` where the platform composes none
 export function ownSignal(signal) {
-  return signal && typeof PageAbortSignal?.any === 'function' ? PageAbortSignal.any([signal]) : signal;
+  return signal && composeSignals ? Reflect.apply(composeSignals, PageAbortSignal, [[signal]]) : signal;
 }
 // A request carrying an `AbortSignal.timeout`, or a signal composed of one, takes the time the signal has left on the
 // page's clock as a real-time deadline (the browser's `setTimeout`, which `clock +N` does not move), as natively
@@ -260,13 +265,20 @@ function sequence(values) {
     if (Object(step) !== step) throw new TypeError('AbortSignal.any(): an iterator result is not an object');
     if (step.done) return list;
     const value = step.value;
-    try { Reflect.apply(abortedOf, value, []); } catch { throw new TypeError('AbortSignal.any(): a value is not an AbortSignal'); }
+    if (!isSignal(value)) throw new TypeError('AbortSignal.any(): a value is not an AbortSignal');
     list.push(value);
   }
 }
 // `AbortSignal.timeout` is an answer's timer too, and `AbortSignal.any` keeps the earliest deadline it is composed of,
 // as the platform keeps its sources; the page's AbortSignal otherwise.
+// The page's own, taken as this module loads: ts-data.js imports it before an app's module, so no app code has run
+// to replace `AbortSignal.any`.
 const PageAbortSignal = globalThis.AbortSignal, abortedOf = PageAbortSignal && Object.getOwnPropertyDescriptor(PageAbortSignal.prototype, 'aborted').get;
+const composeSignals = typeof PageAbortSignal?.any === 'function' ? PageAbortSignal.any : null;
+// Whether `value` is an AbortSignal, by the `aborted` getter's own check
+export function isSignal(value) {
+  try { Reflect.apply(abortedOf, value, []); return true; } catch { return false; }
+}
 const GuardedAbortSignal = PageAbortSignal && new Proxy(PageAbortSignal, { get(target, name, receiver) {
   if (name === 'any' && typeof target.any === 'function') return function any(signals) {
     const list = sequence(signals), signal = target.any(list);

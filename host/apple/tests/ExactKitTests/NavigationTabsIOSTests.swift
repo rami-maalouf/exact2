@@ -426,6 +426,70 @@ final class NavigationTabsIOSTests: XCTestCase {
         XCTAssertEqual(bar.bounds.width, view.bounds.width, accuracy: 0.5)
     }
 
+    func testTabRootsLeaveBackToTheContainingSplitView() throws {
+        let session = try fixture("split-view-back")
+        let navigation = session.presenter.navigation
+        let first = try XCTUnwrap(navigation.primaryNavigation?.topViewController)
+        XCTAssertFalse(first.navigationItem.hidesBackButton,
+                       "UIKit supplies the return to the sidebar when a split view collapses")
+        try tapNode(session, "tab-second")
+        until("the second tab is selected") { navigation.primaryNavigation?.topViewController !== first }
+        let second = try XCTUnwrap(navigation.primaryNavigation?.topViewController)
+        XCTAssertFalse(second.navigationItem.hidesBackButton)
+        try tapNode(session, "tab-home")
+        until("the first tab is selected again") { navigation.primaryNavigation?.topViewController === first }
+        XCTAssertFalse(first.navigationItem.hidesBackButton)
+    }
+
+    func testSegmentsInNativeRoutesTakeInputOutsideTheirHiddenLogicalPanels() throws {
+        guard hostedWindowScene() != nil else {
+            throw missing("scene", "UIControl dispatches actions only in a hosted application")
+        }
+        let session = try fixture("native-route-segments", plan: "EXACT_ACCENT_TABS_PLAN")
+        let p = session.presenter
+        let first = try node(session, "choice-first")
+        let control = try XCTUnwrap(p.segments.control(of: first.id))
+        let route = try XCTUnwrap(p.navigation.primaryNavigation?.topViewController as? RouteController)
+        let panel = try XCTUnwrap(p.navigation.logicalParent(of: route.node))
+        XCTAssertFalse(first.isDescendant(of: panel), "UIKit contains the route outside its authored panel")
+        until("the first route's content is mounted") { first.window != nil }
+        panel.hiddenByHost = true
+        p.segments.sync()
+        XCTAssertTrue(control.isEnabled)
+        var ancestor: UIView? = first
+        while let view = ancestor {
+            XCTAssertFalse(view.isHidden, "the control's physical ancestor \(type(of: view)) is visible")
+            ancestor = view.superview
+        }
+        control.selectedSegmentIndex = 1
+        control.sendActions(for: .valueChanged)
+        until("the native segment presses its authored action") {
+            (try? self.node(session, "chosen-first").accessibleText) == "Two"
+        }
+        try tapNode(session, "tab-second")
+        let second = try node(session, "choice-second")
+        let next = try XCTUnwrap(p.segments.control(of: second.id))
+        until("the second route's content is mounted") { second.window != nil }
+        XCTAssertTrue(next.isEnabled)
+        XCTAssertEqual(next.selectedSegmentIndex, 1, "the offscreen route takes the shared choice")
+        next.selectedSegmentIndex = 0
+        next.sendActions(for: .valueChanged)
+        until("the other route also takes native input") {
+            (try? self.node(session, "chosen-second").accessibleText) == "One"
+        }
+        try tapNode(session, "tab-first")
+        XCTAssertTrue(p.segments.control(of: first.id) === control, "the route retains its control")
+        XCTAssertTrue(control.isEnabled)
+        XCTAssertEqual(control.selectedSegmentIndex, 0)
+        panel.style["display"] = .string("none")
+        p.segments.sync()
+        XCTAssertFalse(control.isEnabled, "authored display none still prevents input")
+        XCTAssertEqual(p.segments.activate(try node(session, "two-first")), false)
+        panel.style["display"] = nil
+        p.segments.sync()
+        XCTAssertTrue(control.isEnabled)
+    }
+
     func testAuthoredTabsAreNotSubstitutedForPlatformTouch() throws {
         let session = try fixture("authored-tabs-touch")
         let tab = try node(session, "tab-second")
@@ -434,7 +498,7 @@ final class NavigationTabsIOSTests: XCTestCase {
         try authoredTabs(session, true)
         XCTAssertNil(agent.substituted(tab), "platform touch must target the visible authored tab")
         let reply = agent.aim(["id": Int(tab.id), "aim": ["press": true]])
-        if (reply["error"] as? String)?.contains("foreground") == true { throw missing("foreground", "test host is in the background") }
+        try requireFront(window)
         let aim = try XCTUnwrap(reply["aim"] as? [String: Any], "\(reply)")
         let point = try XCTUnwrap(aim["window"] as? [Double])
         let hit = try XCTUnwrap(window?.hitTest(CGPoint(x: point[0], y: point[1]), with: nil))
@@ -939,6 +1003,59 @@ final class NavigationTabsIOSTests: XCTestCase {
         XCTAssertEqual(css(), 0, accuracy: 0.5)
         XCTAssertEqual(nav.navigationBar.frame.height, expanded, accuracy: 0.5, large ? "and the large title expanded" : "and the bar kept its height")
         XCTAssertEqual(nav.viewControllers.count, 1)
+    }
+
+    /// LLP 1070.000 §2.6: the selected tab tapped again scrolls its screen's
+    /// list to the top unless the tab's press asked for a row there, landed
+    /// or already shown, whether or not that list was the screen's before
+    /// the press. By the bar's tap (`selectTab`) and by the agent's
+    /// (`activateChrome`), over the real runner.
+    func testTheSelectedTabsScrollToTheTopGivesWayToARequestItsPressMade() throws {
+        try reselectGivesWay("tabs-request-bar") { session, tabs in self.tapTab(tabs, 0) }
+    }
+
+    func testTheAgentsTapOnTheSelectedTabGivesWayToARequestItsPressMade() throws {
+        try reselectGivesWay("tabs-request-agent") { session, _ in
+            XCTAssertNotNil(session.presenter.navigation.activateChrome(try self.node(session, "tab-home")))
+        }
+    }
+
+    private func reselectGivesWay(_ label: String, tap: (ExactSession, UITabBarController) throws -> Void) throws {
+        let session = try fixture(label, plan: "EXACT_TAB_TOP_REQUEST_PLAN")
+        let p = session.presenter, tabs = try XCTUnwrap(p.navigation.tabController)
+        // Unanimated, as under the agent's clock: whether the scroll runs is decided before it starts
+        p.navigation.scrollsToTopAnimated = false
+        let feed = { p.views.values.first { $0.props["testId"] == "feed" && $0.window != nil } }
+        let offset = { feed().flatMap { p.collections.geometry($0.id)?.offset } ?? .nan }
+        func scroll(to y: Double) throws {
+            let sv = try XCTUnwrap(feed()?.scroll)
+            sv.setContentOffset(CGPoint(x: 0, y: CGFloat(y) - sv.adjustedContentInset.top), animated: false)
+            until("the feed at \(y)") { abs(offset() - y) < 0.5 }
+        }
+        func press(_ testId: String) throws {
+            p.press(try node(session, testId).id)
+            spin(0.3)
+        }
+        func reselect(_ what: String, _ y: Double) throws {
+            try tap(session, tabs)
+            until(what) { abs(offset() - y) < 0.5 }
+            spin(0.5)
+            XCTAssertEqual(offset(), y, accuracy: 0.5, what)
+        }
+        until("the feed shows") { feed() != nil }
+        try scroll(to: 300)
+        try reselect("the request lands", 3000)
+        try reselect("done at once, it still wins", 3000)
+        try press("aim-nothing")
+        try reselect("a press that asks for nothing: to the top", 0)
+        try press("unload")
+        try press("aim-row")
+        XCTAssertNil(feed(), "no feed before the press")
+        try reselect("a list the press made", 3000)
+        try press("aim-nothing")
+        try press("name-aside")
+        try scroll(to: 600)
+        try reselect("a list the press made the screen's, which asked for nothing there", 0)
     }
 
     func testUnmountingAndRemountingTheViewKeepsEveryTabsStack() throws {

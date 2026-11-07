@@ -418,9 +418,9 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
     @objc func focusPreviousNode() { presenter?.moveFocus(backward: true) }
     /// The ring a keyboard-focused control shows, as the web's `:focus-visible`
     /// and AppKit's focus ring do: drawn when Tab moved the focus here, never
-    /// for a touch, and inside the box so no clip hides it.
+    /// for a touch, and inside the box so no clip hides it; none for `outlineNone`.
     func showFocusRing(_ shown: Bool) {
-        guard shown, !isNativeTextControl else { focusRing?.removeFromSuperlayer(); focusRing = nil; return }
+        guard shown, !isNativeTextControl, !outlineNone else { focusRing?.removeFromSuperlayer(); focusRing = nil; return }
         let ring = focusRing ?? CAShapeLayer()
         #if os(tvOS)
         // Across a room the ring stands clear of the content: outside the box, padded and rounded.
@@ -774,6 +774,7 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
         presenter?.collections.userIntent(id, travel: true)
         retainedScrollTop = nil
         #if os(iOS)
+        if #available(iOS 27.1, *) { presenter?.arrangements.cancelScrollHandoff(id) }
         if swipeOwner { presenter?.swipeActions.painted.began(self) }
         #endif
     }
@@ -989,7 +990,6 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
         return style["pointer_events"]?.string == "none" || cssVisibilityHidden ? nil : self
     }
 
-
     /// The box on screen, through the placement of the placed child this
     /// node is (or is under), for assistive technology — the same box the
     /// agent's `layout` reports.
@@ -1006,13 +1006,13 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
     // @ref LLP 1034 D1/D2
     var drawsDark: Bool { traitCollection.userInterfaceStyle == .dark }
     package func channels(_ key: String, dark: Bool? = nil) -> [Double]? {
-        style[key].flatMap { $0.channels(dark: dark ?? drawsDark, contrast: drawsHighContrast, elevated: drawsElevated, tint: ownTint(for: $0, key: key)) }.map { dimmedWithTint($0, key: key) }
+        style[key].flatMap { $0.channels(dark: dark ?? drawsDark, contrast: drawsHighContrast, elevated: drawsElevated, tint: ownTint(for: $0)) }
     }
-    func textChannels(_ key: String, dark: Bool? = nil) -> [Double]? { style[key].flatMap { $0.textChannels(dark: dark ?? drawsDark, contrast: drawsHighContrast, elevated: drawsElevated, tint: ownTint(for: $0, key: key)) }.map { dimmedWithTint($0, key: key) } }
+    func textChannels(_ key: String, dark: Bool? = nil) -> [Double]? { style[key].flatMap { $0.textChannels(dark: dark ?? drawsDark, contrast: drawsHighContrast, elevated: drawsElevated, tint: ownTint(for: $0)) } }
     package func color(_ key: String, _ fallback: UIColor) -> UIColor { cgColor(key).map { UIColor(cgColor: $0) } ?? fallback }
-    /// CSS `::placeholder { color }` (LLP 1104 D3), a native editor's undimmed as `fieldInk` is; nil, the platform's.
-    var placeholderColor: UIColor? { (isNativeTextControl ? undimmedCGColor("placeholder_color") : cgColor("placeholder_color")).map { UIColor(cgColor: $0) } }
-    package func cgColor(_ key: String, dark: Bool? = nil) -> CGColor? { style[key].flatMap { $0.cgColor(dark: dark ?? drawsDark, contrast: drawsHighContrast, elevated: drawsElevated, tint: ownTint(for: $0, key: key)) }.map { dimmedWithTint($0, key: key) } }
+    /// CSS `::placeholder { color }` (LLP 1104 D3); nil, the platform's.
+    var placeholderColor: UIColor? { uiColor("placeholder_color") }
+    package func cgColor(_ key: String, dark: Bool? = nil) -> CGColor? { style[key].flatMap { $0.cgColor(dark: dark ?? drawsDark, contrast: drawsHighContrast, elevated: drawsElevated, tint: ownTint(for: $0)) } }
     package func number(_ key: String, _ fallback: CGFloat = 0) -> CGFloat {
         if let n = style[key]?.number { return CGFloat(n) }
         return fallback
@@ -1039,13 +1039,12 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
         ])
     }
 
-    // display:none removes the CSS box, but retains its stored scroll position.
-    // UIKit/AppKit collapse the native extent; keep that transient reset out of
-    // scroll events and restore only when the box returns.
+    // A pane hidden by its native container retains its scroll position as display:none does.
     var hasScrollLayoutBox: Bool {
         var ancestor: UIView? = self
         while let current = ancestor {
-            if let node = current as? NodeView, node.style["display"]?.string == "none" { return false }
+            if let node = current as? NodeView,
+               node.style["display"]?.string == "none" || node.presenter?.arrangementHides(node.id) == true { return false }
             ancestor = current.superview
         }
         return true
@@ -1245,7 +1244,7 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
         if Self.containerMoves == 0 { pressEpoch &+= 1; cancelPressContact(reparenting: true); presenter?.unshown(self) } // a new parent: shown elsewhere
         super.didMoveToSuperview()
         Self.textGeometry &+= 1
-        paintOrderMoved(); repaintFacesWhileDimmed() // as a move into or out of a control changes its face (TintDimmingIOS.swift)
+        paintOrderMoved()
         if superview == nil { boxFilter?.remove() } else if boxFilter != nil { redrawFilter() }
         // A box styled before it joined its parent learns its material now.
         if superview != nil { syncVibrancy() }
@@ -1259,7 +1258,7 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
         if old["display"] != s["display"] || old["visibility"] != s["visibility"] { isHidden = hostHidden }
         if old["zoom"] != s["zoom"], kind == "iframe" { updateEmbedded() } // the guest's page zoom (LLP 1020.002 D6)
         if old["color_scheme"] != s["color_scheme"] { applyColorScheme() }
-        if old["accent_color"] != s["accent_color"] { applyAccentTint() }
+        applyTint(from: old)
         updateSymbol(); syncDynamicRange(from: old)
         (clipPath, clipRule) = (ClipPath.path(s["clip_path"]), ClipPath.rule(s["clip_path"]))
         applyBoxMask()
@@ -1390,6 +1389,7 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
 
     /// Its parts move with its frame: in an animation UIKit has open only if the last frame showed it (`Presenter.moveOrPlace`).
     package override func layoutSubviews() {
+        HostPhases.shared.count(.nodeLayouts)
         if let presenter { presenter.moveOrPlace(self, layOutParts) } else { layOutParts() }
     }
     private func layOutParts() {
@@ -1453,7 +1453,7 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
         }
         if !cssVisibilityHidden, kind == "image", symbolView == nil, flightLook == nil || imageLayer == nil, let bitmap = raster?.image {
             // CSS object-fit over the content box (the frame inside border
-            // and padding), clipped by the border box's radius: `fill`
+            // and padding), clipped to the content edge's curve: `fill`
             // stretches, `contain`/`cover` keep the ratio, `none` is the
             // natural size, `scale-down` the smaller of none and contain;
             // an unknown value is the initial `fill`.
@@ -1462,7 +1462,7 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
             let rect = RasterGeometry.rect(natural: bitmap.naturalSize, content: content, fit: fit)
             ctx.saveGState()
             path.addClip()
-            UIBezierPath(rect: content).addClip()
+            clipToContentEdge(ctx, content)
             ctx.translateBy(x: rect.minX, y: rect.maxY)
             ctx.scaleBy(x: 1, y: -1)
             RasterGeometry.draw(ctx, AnimatedRasters.shared.frame(for: self) ?? bitmap.image, in: CGRect(origin: .zero, size: rect.size), tint: channels("tint_color").map { TextEngine.color($0).cgColor })

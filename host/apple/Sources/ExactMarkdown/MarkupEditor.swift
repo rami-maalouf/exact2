@@ -42,6 +42,8 @@ final class MarkupEditor: NSObject, MarkdownEditing {
         let italic: Bool
         let lineHeight: CGFloat?
         let ink: PlatformColor
+        /// The device pixels a point its line boxes round to (`CSSLineBox`).
+        var lineScale: CGFloat = 1
         /// The opacity of the platform's secondary label colour in the
         /// appearance the field draws in; the adapters read it there.
         var secondaryOpacity: CGFloat = 0.5
@@ -57,9 +59,9 @@ final class MarkupEditor: NSObject, MarkdownEditing {
 
     /// The attributes plain typing takes, whatever the caret sits beside.
     func baseAttributes(_ look: Look) -> [NSAttributedString.Key: Any] {
-        let paragraph = NSMutableParagraphStyle()
-        if let h = look.lineHeight { paragraph.minimumLineHeight = h; paragraph.maximumLineHeight = h }
-        return [.font: look.font(look.size, look.weight, look.family, look.italic), .foregroundColor: look.ink, .paragraphStyle: paragraph]
+        let paragraph = NSMutableParagraphStyle(), font = look.font(look.size, look.weight, look.family, look.italic)
+        paragraph.setLineHeight(look.lineHeight, font: font, scale: look.lineScale)
+        return [.font: font, .foregroundColor: look.ink, .paragraphStyle: paragraph]
     }
 
     /// The base attributes in the direction of the line `caret` is on, as the
@@ -183,7 +185,7 @@ final class MarkupEditor: NSObject, MarkdownEditing {
             case 1:
                 let scale: CGFloat = [1.6, 1.4, 1.2, 1.1, 1.0, 1.0][max(0, min(5, level - 1))]
                 attributes[.font] = look.font((look.size * scale).rounded(), 700, look.family, look.italic)
-                if look.lineHeight != nil { style.minimumLineHeight = 0; style.maximumLineHeight = 0 }
+                if look.lineHeight != nil { style.setLineHeight(nil, font: baseFont) }
             case 2, 3, 4:
                 style.headIndent = indent + 20
             case 6, 7, 9:

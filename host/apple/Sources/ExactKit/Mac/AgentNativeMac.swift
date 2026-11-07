@@ -43,8 +43,10 @@ extension Agent {
     func agreement(limit: Int) -> [String: Any] {
         let size = presenter.viewport.contentView.bounds.size
         var reply: [String: Any] = ["clock": session.now(), "viewport": ["w": Agent.r2(size.width), "h": Agent.r2(size.height)]]
-        let scale = presenter.viewport.window?.backingScaleFactor ?? 1
-        let report = AgreementReport(tolerance: 1 / max(scale, 1))
+        let scale = presenter.viewport.contentView.pixelScale ?? 1
+        // A pixel, and the layout unit an edge is taken to before it is
+        // rounded to one (`PixelGridMac.swift`).
+        let report = AgreementReport(tolerance: 1 / max(scale, 1) + 1.0 / 64)
         guard let kernel = kernelFrames() else { return ["error": "layout agree: the runner's frames are unreadable"] }
         guard let exactView = presenter.session?.view else { return ["error": "layout agree: the session has no view"] }
         if exactView.window == nil { report.incomplete("no-window") }
@@ -86,7 +88,7 @@ extension Presenter {
             if sub === o.metal || sub === o.overlay { return ("canvas", id) }
             if sub === o.field || sub === o.textArea || sub === o.textAreaScroll { return ("editor", id) }
             if sub === o.scroll { return ("scroll", id) }
-            if sub === o.video || sub === o.web { return ("heavy", id) }
+            if sub === o.video || sub === o.web || sub is FrameScaleHolder { return ("heavy", id) }
             if sub === controls.controls[id] { return ("control", id) }
             if segments.inspectionOwns(sub) { return ("segment", id) }
             if Self.platformKinds.contains(o.kind) || o.props["hatch"] != nil { return ("platform", id) }

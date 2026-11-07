@@ -304,9 +304,10 @@ impl Collector {
         self.previous_frame = frame;
     }
 
-    /// Record one frame's work, from its start to its finish, against its deadline.
+    /// Record one frame's work, from its start to its finish, against its deadline. Work may begin after its
+    /// deadline, as the screen's does when its update waited past it.
     fn worked(&mut self, start: u64, deadline: u64, finished: u64) {
-        if start == 0 || finished < start || deadline < start {
+        if start == 0 || finished < start {
             return;
         }
         let s = &mut self.snapshot;
@@ -321,7 +322,7 @@ impl Collector {
         s.histogram_overflows = s.histogram_overflows.saturating_add(u64::from(saturated));
         if duration > self.maxima.slowest_ns {
             self.maxima.slowest_ns = duration;
-            self.maxima.budget_ns = deadline - start;
+            self.maxima.budget_ns = deadline.saturating_sub(start);
         }
     }
 
@@ -904,6 +905,14 @@ mod tests {
     }
 
     #[test]
+    fn work_begun_past_its_deadline_is_late() {
+        let mut c = Collector::default();
+        c.worked(2_000_000, 1_000_000, 3_000_000);
+        assert_eq!((c.snapshot.worked, c.snapshot.late), (1, 1));
+        assert_eq!((c.maxima.slowest_ns, c.maxima.budget_ns), (1_000_000, 0));
+    }
+
+    #[test]
     fn extreme_observations_saturate_and_never_panic() {
         let mut c = Collector::default();
         c.history.requested_period_ns = u64::MAX - 1;
@@ -1242,6 +1251,48 @@ mod tests {
         for id in ids {
             destroy(id);
         }
+    }
+
+    #[test]
+    fn a_callback_does_not_follow_the_apply_it_ran() {
+        let id = create();
+        let start = 1_000_000_000;
+        capture(id, 1, start);
+        let incarnation = history_status(id).capture;
+        let arrival = start + 16_000_000;
+        // The apply finishes past its target within the callback, which records once it returns
+        let work = Work {
+            capture: incarnation,
+            began_ns: arrival + 1_000_000,
+            finished_ns: arrival + 5_000_000,
+            target_ns: arrival + 2_000_000,
+            ..Work::default()
+        };
+        applied(id, work, 0);
+        record(
+            id,
+            arrival,
+            arrival + 8_000_000,
+            8_000_000,
+            arrival + 6_000_000,
+            COMPLETE,
+            0,
+        );
+        assert_eq!(hitch(id, 0).flags & history::AFTER_KNOWN, 0);
+        let next = arrival + 16_000_000;
+        record(
+            id,
+            next,
+            next + 8_000_000,
+            8_000_000,
+            next + 1_000_000,
+            COMPLETE,
+            0,
+        );
+        let event = hitch(id, 0);
+        assert_ne!(event.flags & history::AFTER_KNOWN, 0);
+        assert_eq!(event.after_at_us, 11_000);
+        destroy(id);
     }
 
     #[test]

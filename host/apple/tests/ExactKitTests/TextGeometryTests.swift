@@ -658,13 +658,18 @@ extension TextGeometryTests {
                                CTLineGetStringIndexForPosition(b, CGPoint(x: offset, y: 0)))
             }
         }
+        #else
+        let original = p
+        #endif
         if p.height.isFinite && p.baselines.allSatisfy({ $0.isFinite }) {
             let box = CGRect(x: 12, y: 9, width: width, height: p.height)
             let clip = CGRect(x: 0, y: 0, width: 360, height: 180)
-            XCTAssertEqual(inkBitmap(p, spec: input, bounds: box, clip: clip, exhaustive: false),
-                           inkBitmap(original, spec: input, bounds: box, clip: clip, exhaustive: true))
+            let expected = inkBitmap(original, spec: input, bounds: box, clip: clip, exhaustive: true)
+            if input.runs.contains(where: { !$0.text.isEmpty && $0.size > 0 }) {
+                XCTAssertTrue(CapturePixels.hasPaint(expected), "the visible strut reference draws")
+            }
+            XCTAssertEqual(inkBitmap(p, spec: input, bounds: box, clip: clip, exhaustive: false), expected)
         }
-        #endif
         return (p, calls)
     }
 
@@ -832,7 +837,13 @@ extension TextGeometryTests {
                 // CSS Text 3 §7.1: a line wider than its box is start-aligned (left to right, here).
                 let x = max(0, CGFloat(CTLineGetPenOffsetForFlush(line, flush, Double(bounds.width))))
                 context.saveGState()
-                context.translateBy(x: bounds.minX + x, y: bounds.minY + baseline.rounded())
+                // On the Mac a baseline rounds at its place in the view, on iOS below the box's top (`TextEngine.paintedLine`).
+                #if os(macOS)
+                let y = (bounds.minY + baseline).rounded()
+                #else
+                let y = bounds.minY + baseline.rounded()
+                #endif
+                context.translateBy(x: bounds.minX + x, y: y)
                 context.scaleBy(x: 1, y: -1)
                 context.textPosition = .zero
                 CTLineDraw(line, context)
@@ -847,7 +858,7 @@ extension TextGeometryTests {
     func assertInkMatches(_ paragraph: Paragraph, spec: Spec, bounds: CGRect,
                                   clip: CGRect, file: StaticString = #filePath, line: UInt = #line) {
         let expected = inkBitmap(paragraph, spec: spec, bounds: bounds, clip: clip, exhaustive: true)
-        XCTAssertTrue(expected.contains { $0 != 0 }, "Oracle clip must contain ink", file: file, line: line)
+        XCTAssertTrue(CapturePixels.hasPaint(expected), "the reference clip contains ink", file: file, line: line)
         let actual = inkBitmap(paragraph, spec: spec, bounds: bounds, clip: clip, exhaustive: false)
         XCTAssertTrue(actual == expected, "Viewport differs from exhaustive paint: \(clip)", file: file, line: line)
     }

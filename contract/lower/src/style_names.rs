@@ -135,8 +135,8 @@ pub const STYLE_NAMES: &[(&str, &str, AttrTarget)] = &[
     // platform draws it.
     ("accent-color", "css CSS UI 4", AttrTarget::Styles(&[StyleId::AccentColor])),
     ("appearance", "css CSS UI 4", AttrTarget::Styles(&[StyleId::Appearance])),
-    // @ref LLP 1104 D6 — a text field's focus ring off: `outline: none`,
-    // the one value either name takes (`fields::outline_refusal`).
+    // @ref LLP 1104 D6 — the focus ring off, on any element that takes
+    // the focus: `outline: none`, the one value either name takes.
     ("outline-style", "css CSS UI 4", AttrTarget::Styles(&[StyleId::OutlineStyle])),
     ("outline", "css CSS UI 4", AttrTarget::Styles(&[StyleId::OutlineStyle])),
     ("-exact-tint-color", "exact LLP 1011", AttrTarget::Styles(&[StyleId::TintColor])),
@@ -272,6 +272,7 @@ pub const STYLE_NAMES: &[(&str, &str, AttrTarget)] = &[
     ("backface-visibility", "css CSS Transforms 2", AttrTarget::Styles(&[StyleId::BackfaceVisibility])),
     // @ref LLP 1077 §5 — declared rows CSS has no name for.
     ("-exact-symbol-rendering", "exact LLP 1077", AttrTarget::Styles(&[StyleId::SymbolRendering])),
+    ("-exact-tint-adjustment", "exact LLP 1077", AttrTarget::Styles(&[StyleId::TintAdjustment])),
     // @ref LLP 1121 D5 — a subtree's app modes, pinned.
     ("-exact-mode", "exact LLP 1121", AttrTarget::Styles(&[StyleId::Mode])),
     ("-exact-symbol-palette", "exact LLP 1077", AttrTarget::Styles(&[StyleId::SymbolPalette])),

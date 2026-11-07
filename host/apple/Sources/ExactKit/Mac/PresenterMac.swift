@@ -39,6 +39,8 @@ package final class Presenter {
     var leaving: [UInt32: Leaving] = [:]
     /// Shared elements in flight, by the arriver's id (LLP 1013.000, `FlightsMac.swift`).
     var flights: [UInt32: Flight] = [:]
+    /// Views whose drawn origin a batch moved (`PixelGridMac.swift`).
+    var gridMoved: [NodeView] = []
     /// A view's props were written (`NodeView.props`' own observer).
     func propsChanged(_ view: NodeView) {
         chrome.note(view.id, props: view.props)
@@ -576,8 +578,12 @@ package final class Presenter {
         ].filter { !$0.isEmpty }
     }
 
-    /// The viewport's size in points: what the kernel lays out under.
-    var viewportSize: CGSize { viewport.contentSize }
+    /// The viewport's size in CSS px, its points over the page zoom
+    /// (ZoomMac.swift): what the kernel lays out under.
+    var viewportSize: CGSize {
+        let size = viewport.contentSize, zoom = viewport.magnification
+        return CGSize(width: size.width / zoom, height: size.height / zoom)
+    }
     /// The first root's frame size, zero before the first batch.
     var rootSize: CGSize { root.subviews.first?.frame.size ?? .zero }
     /// The page's canvas colour: the first root's background (white when unset).
@@ -657,7 +663,7 @@ package final class Presenter {
     /// Size the document to its roots, never smaller than the viewport.
     func fitDocument() {
         viewport.invalidateDocumentFit()
-        var size = viewport.contentSize
+        var size = viewportSize
         for r in root.subviews {
             // What overflows a root that does not clip is the document's (`content`).
             let v = r as? NodeView, extent = v.flatMap { $0.scroll == nil && !$0.overflowClips && !$0.isHidden ? $0.content : nil }
@@ -1140,6 +1146,7 @@ package final class Presenter {
                     child.rejoinUnderHold()
                     child.prepareToMount()
                     container.addSubview(child)
+                    regrid(child)
                 }
                 orderChildren(want, in: container)
             case .surface:
@@ -1176,25 +1183,11 @@ package final class Presenter {
                     if dialogs.owns(r) || menus.owns(r) { continue }
                     r.prepareToMount()
                     root.addSubview(r)
+                    regrid(r)
                 }
             case .frame:
                 guard let v = views[id] else { continue }
-                let frame = v.frameInScrollDocument(NSRect(x: op.x, y: op.y, width: op.w, height: op.h))
-                if flightFrame(id, frame) { continue }
-                if !dialogs.frame(v, frame) && !menus.frame(v, frame) && !tables.frame(v, frame) { v.frame = frame }
-                v.arrangeShift = .zero
-                v.textRasterGeometryChanged()
-                v.scroll?.frame = v.bounds
-                v.layoutField()
-                v.layoutTextArea()
-                v.metal?.frame = v.bounds
-                v.overlay?.frame = v.bounds
-                v.web?.frame = v.bounds
-                v.applyShadow()
-                v.fitScroll()
-                v.applyTransform()
-                if v.surface != nil { v.applySurface() } // its size is the laid-out one plus `layoutResize`
-                v.layoutContent()
+                applyFrame(v, NSRect(x: op.x, y: op.y, width: op.w, height: op.h))
             case .fieldContent:
                 views[id]?.applyFieldContent(op.payload)
             case .content:
@@ -1217,6 +1210,7 @@ package final class Presenter {
             default: break
             }
         }
+        regridMoved()
         if !flights.isEmpty { flightsBatchApplied() }
         tables.sync(batch)
         navigation.sync(batch, reparented: reparented)

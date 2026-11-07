@@ -309,68 +309,27 @@ extension NavigationHost {
         tint(tabs.tablist)
     }
 
-    /// The selected tab's own tint, else the tablist's accent colour, tints
-    /// the bar's selected item; an inherited tab tint leaves that fallback.
-    /// The row is inherited, as in CSS, and reaches the host only on the
-    /// node that sets it: the nearest ancestor that does is read. Resolved
-    /// per appearance, so dark mode follows.
+    /// The tab bar's own tint, as a hand-built app tints one: the selected tab's own tint where it
+    /// writes a colour of its own (or a share of the tint), as a value, else the accent of the tab or
+    /// its tablist (`ownAccent`), nil where that is the window's. Its selected item in the tint draws
+    /// it, and UIKit greys it behind a sheet or an alert. Resolved per appearance, so dark mode follows.
     func tint(_ list: NodeView) {
         guard let bar = tabController?.tabBar else { return }
+        var accented = list
         if let tabs = tabItemsSource?.0, tabs.tablist === list, tabs.tabs.indices.contains(routerTab) {
             let selected = tabs.tabs[routerTab]
-            if selected.ownColor("tint_color") != nil,
-               let light = selected.undimmedChannels("tint_color", dark: false), let dark = selected.undimmedChannels("tint_color", dark: true) {
+            accented = selected
+            if selected.ownColor("tint_color") != nil, selected.style["tint_color"]?.tintAlpha != 1,
+               let light = selected.carriedChannels("tint_color", dark: false), let dark = selected.carriedChannels("tint_color", dark: true) {
                 let wanted = [light, dark]
-                guard tabTint != wanted || !tabTintOwn else { return }
+                guard tabTint != wanted else { return }
                 tabTint = wanted
-                tabTintOwn = true
                 bar.tintColor = UIColor { TextEngine.color($0.userInterfaceStyle == .dark ? dark : light) }
                 return
             }
         }
-        var view: UIView? = list
-        while let at = view, (at as? NodeView)?.channels("accent_color", dark: false) == nil { view = at.superview }
-        let source = view as? NodeView
-        // An accent that is the app's tint (`AccentColor`), where the bar
-        // inherits the same tint, is left for the bar to inherit, as a
-        // hand-built app leaves its bar's. Read from a view, the tint behind
-        // an alert or a menu is already dimmed (`tintAdjustmentMode`), and
-        // the bar would dim it a second time.
-        if case .object(let o)? = source?.style["accent_color"], o["sys"]?.string == "@tint", let source, inheritsSameTint(bar, as: source) {
-            guard tabTint != [] || tabTintOwn else { return }
-            tabTint = []
-            tabTintOwn = false
-            bar.tintColor = nil
-            return
-        }
-        let wanted = [source?.channels("accent_color", dark: false), source?.channels("accent_color", dark: true)]
-        guard wanted != tabTint || tabTintOwn else { return }
-        tabTint = wanted
-        tabTintOwn = false
-        // Never `.tintColor` in its place: that is the bar's own tint, this
-        // colour, and a tablist whose accent went before the next sync (a
-        // style that drops it) resolved it until the stack ran out. The
-        // bar's container has the tint the bar would inherit.
-        bar.tintColor = source.map { source in
-            UIColor { [weak source, weak bar] traits in
-                source?.channels("accent_color", dark: traits.userInterfaceStyle == .dark).map { TextEngine.color($0) }
-                    ?? bar?.superview?.tintColor ?? .systemBlue
-            }
-        }
-    }
-
-    /// Whether the bar inherits the tint `node` does: no ancestor of the
-    /// node sets a colour of its own (`applyAccentTint`), or the bar is
-    /// inside the nearest that does.
-    private func inheritsSameTint(_ bar: UIView, as node: NodeView) -> Bool {
-        var view: UIView? = node
-        while let at = view {
-            if let n = at as? NodeView, n.style["accent_color"]?.namesTint != true, n.channels("accent_color", dark: false) != nil {
-                return bar.isDescendant(of: n)
-            }
-            view = at.superview
-        }
-        return true
+        tabTint = nil
+        assign(bar, \.tintColor, accented.ownAccent)
     }
 
     /// The bar would select `controller`: press its authored tab.
@@ -379,10 +338,11 @@ extension NavigationHost {
               let panel = tabPanels.first(where: { tabStack($0) === controller }),
               let index = tabs.panels.firstIndex(where: { $0.id == panel }) else { return }
         let screen = reselectedRoot(index), id = tabs.tabs[index].id
+        let requests = screen == nil ? nil : presenter.collections.lastRequests()
         _ = act(id, 0)
         // After the tab's own press, which is queued: a batch applied under
         // a running scroll would cut it short.
-        if let screen { presenter.elements.later(id, "scroll to top") { [weak self, weak screen] in if let screen { self?.scrollToTop(screen) } } }
+        if let screen { presenter.elements.later(id, "scroll to top") { [weak self, weak screen] in if let screen { self?.scrollToTop(screen, since: requests) } } }
     }
 
     /// The screen a tap on the bar's item for tab `index` scrolls to its
@@ -401,10 +361,21 @@ extension NavigationHost {
     /// its top, as the status bar's tap takes it: UIKit's animation, to where
     /// a large title is open, which UIKit opens as the offset arrives.
     /// UIKit's tab bar does not do this itself: a selected tab tapped again
-    /// scrolls nothing in UIKit alone (iOS 27, a real touch).
-    func scrollToTop(_ c: RouteController) {
+    /// scrolls nothing in UIKit alone (iOS 27, a real touch). It is the
+    /// reader's move of a list there (`CollectionHost.readerMoves`), and it
+    /// gives way to a `scrollIntoView` the tab's press asked for there,
+    /// landed, under way or already shown: the author's answer to the tap
+    /// wins over the platform's (LLP 1070.000 §2.6). `requests`: every
+    /// list's latest request before the press (`CollectionHost.lastRequests`),
+    /// read for them all because the press may make the screen's list, or
+    /// make another list the screen's.
+    func scrollToTop(_ c: RouteController, since requests: [UInt32: UInt64]? = nil) {
         guard let sv = contentScrollView(of: c) else { return }
         let node = contentScroller(of: c)
+        if let node, presenter.collections.owns(node.id) {
+            if let requests, presenter.collections.lastRequest(node.id) != requests[node.id] ?? 0 { return }
+            presenter.collections.readerMoves(node.id)
+        }
         // At its top under a collapsed title it goes on to the open title's
         // inset, as UIKit's status-bar tap does, and opens it.
         let inset = max(sv.adjustedContentInset.top, node != nil && node === c.collapseScroll ? node?.scrollOrigin ?? 0 : 0)
@@ -474,7 +445,6 @@ extension NavigationHost {
         tabItems = []
         tabItemsSource = nil
         tabTint = nil
-        tabTintOwn = false
         adoptedTablist = nil
         tablistAppearanceNone = false
         measuredTablist = nil

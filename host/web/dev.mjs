@@ -26,7 +26,7 @@ import { designPath, frameOnlyByTool, tamberServer } from '../../scripts/tamber-
 import { pluginOnLoopback, remoteArgs } from '../../scripts/tamber-remote.mjs'; import { openRemoteCanvas } from '../../scripts/tamber-canvas.mjs';
 import { designDigest, patchDesign } from '../../scripts/tamber-patch.mjs';
 import { relayChannel, serveCommands, serveReport, streamFrame } from '../../scripts/tamber-builds.mjs';
-import { captureAssets, assetCards, alsoOnIPv6Loopback, freeOnIPv6Loopback, listenDelay, applyShaderTreeChange, sendStaticBody, watchLauncher, applyStaticChange, applyStaticTreeChange, builtAppMatches, developmentOpenPage, readDevGenerationAsync, readStaticFileAsync, readWebRequest, reflectShaderFiles, saveTrace, retainDevGeneration, shaderInterfaceDigests, syncStaticTree, watchStaticTrees, webContentType, webEnvelope, devGenerationDigest, MODULE_FILES, moduleCards } from './serve.mjs';
+import { captureAssets, assetCards, alsoOnIPv6Loopback, freeOnIPv6Loopback, listenDelay, applyShaderTreeChange, sendStaticBody, watchLauncher, applyStaticChange, applyStaticTreeChange, builtAppMatches, developmentOpenPage, readDevGenerationAsync, readStaticFileAsync, readWebRequest, readModuleFile, reflectShaderFiles, saveTrace, retainDevGeneration, shaderInterfaceDigests, syncStaticTree, watchStaticTrees, webContentType, webEnvelope, devGenerationDigest, MODULE_FILES, moduleCards } from './serve.mjs';
 const argv = guardFlags('web', process.argv.slice(2)); // --help, or a flag it does not take, before anything starts
 const arg = (name, fallback) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : fallback; };
 // The dev wasm links every capability (LLP 1047 D7): a new plan that adds
@@ -403,7 +403,7 @@ function readMap() { try { return readFileSync(resolve(dist, 'app.plan.map.json'
 // A polled stream (Linux) is told the design to run when it opens.
 tamber?.channel.greet(() => designSnapshot && designNotice(designSnapshot));
 const generationCache = resolve(root, 'target/dev-generations', createHash('sha256').update(canonicalBytes({ app: app.id, path: app.dir, dist })).digest('hex'));
-let current = null;
+let current = null; const { promise: firstGeneration, resolve: generated } = Promise.withResolvers(); // what a test's listen delay can wait for (serve.mjs `listenDelay`)
 let currentModule = null;
 let currentRust = null;
 let currentRustId = null;
@@ -512,7 +512,7 @@ function captureGeneration(reuseCurrentAssets = false, tableUpdate = null) {
   // said to a parent loop. A refused candidate changes neither.
   if (files.has('app.plan.map.json')) keepMap(envelope.plan.sha256, files.get('app.plan.map.json'));
   announcePlan(envelope.plan.sha256, files.get('app.plan.map.json') ?? null);
-  console.log(classification.map(line=>`  ${line}`).join('\n'));
+  console.log(classification.map(line=>`  ${line}`).join('\n')); generated();
 }
 
 // A ready line waits for the server to listen ([::1] too) and its doors to open: a test or an agent connects on it.
@@ -1466,7 +1466,7 @@ const serve = async (req, res) => {
   const file = url.pathname === '/' ? '/index.html' : url.pathname;
   if (file === '/dev.js') { res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' }); res.end(readFileSync(resolve(root, 'host/web/dev.js'))); return; }
   // The module artifact as it is now, not as the last build copied it: a reload picks up an edit (LLP 1067 D5).
-  if (file.startsWith('/modules/') && app.modules.web && /^\/modules\/[\w./-]+\.js$/.test(file) && !file.includes('..')) { const path = resolve(dirname(app.modules.web), file.slice('/modules/'.length)); if (existsSync(path)) { res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' }); res.end(readFileSync(path)); return; } }
+  if (file.startsWith('/modules/') && app.modules.web) { const body = readModuleFile(app.modules.web, file); res.writeHead(body ? 200 : 404, { 'content-type': 'text/javascript', 'cache-control': 'no-store' }); res.end(body); return; }
   try {
     if (!found) { res.writeHead(404); res.end(); return; }
     let body = found.body;
@@ -1480,7 +1480,7 @@ const serve = async (req, res) => {
 };
 const server = early?.server ?? createServer(serve);
 let six = null; server.on('error', async (e) => { console.error(`cannot listen on ${host}:${port}: ${e.code ?? e.message}${e.code === 'EADDRINUSE' ? ' (another dev loop? --port <n> picks another)' : ''}`); six?.close(); killCompiler(); await tamber?.close(); process.exit(1); });
-await readStaticFileAsync(dist, '/index.html'); if (!early) await listenDelay(); // warm the reader before advertising readiness (a test may wait too)
+await readStaticFileAsync(dist, '/index.html'); if (!early) await listenDelay(process.env, firstGeneration); // warm the reader before advertising readiness (a test may wait too)
 // (and on [::1], for a localhost URL: the design tool's canvas)
 if (servedAs == null) six = await alsoOnIPv6Loopback(server, port).catch(async (e) => { console.error(`cannot listen on [::1]:${port}: ${e.code} (another server there would answer a localhost URL; --port <n> picks another)`); killCompiler(); await tamber?.close(); process.exit(1); });
 early?.phase('host', 'ready'); early?.serve(serve);

@@ -672,7 +672,7 @@ final class NavigationBarIOSTests: XCTestCase {
         let header = try node(session, "header-home")
         XCTAssertTrue(header.isHidden, "the bar shows the header: its authored button is hidden")
         let reply = Agent(session: session).aim(["id": Int(compose.id), "aim": ["press": true]])
-        if (reply["error"] as? String)?.contains("foreground") == true { throw missing("foreground", "the test host is in the background: a real touch's aim refuses it") }
+        try requireFront(window)
         let aim = try XCTUnwrap(reply["aim"] as? [String: Any], "\(reply)")
         let w = try XCTUnwrap(aim["window"] as? [Double])
         let point = CGPoint(x: w[0], y: w[1])
@@ -709,7 +709,7 @@ final class NavigationBarIOSTests: XCTestCase {
         button.accessibilityIdentifier = "compose-home"
         XCTAssertNil(agent.drawnCovered(compose), "the item's own button, outside the bar")
         let reply = agent.aim(["id": Int(compose.id), "aim": ["press": true]])
-        if (reply["error"] as? String)?.contains("foreground") == true { throw missing("foreground", "the test host is in the background: a real touch's aim refuses it") }
+        try requireFront(window)
         XCTAssertNotNil(reply["aim"], "a real touch aims at the item's own button: \(reply)")
         // The identifier in another session's view, mounted in this one's over the item
         let nestedSession = ExactApp.shared.makeSession(label: "bar-glass-nested")
@@ -850,7 +850,8 @@ final class NavigationBarIOSTests: XCTestCase {
         let before = frames()
         try tap(about)
         until("the popover opens") { session.presenter.menus.isOpen(pop) && pop.window != nil && !pop.isHidden }
-        spin(0.3)
+        // Wait for the region the open tells the kernel on the next turn, whose layout is the last of the open's that could move the page
+        until("its region is told") { session.presenter.regionsUntold.isEmpty }
         let after = frames()
         for (id, frame) in before { XCTAssertEqual(after[id], frame, "\(id) stays put while the popover is open") }
         let bar = nav.navigationBar.convert(nav.navigationBar.bounds, to: nil)

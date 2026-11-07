@@ -40,7 +40,7 @@ final class TextRasterizer {
 
     private func key(_ node: NodeView) -> TextRasterKey {
         TextRasterKey(spec: node.paragraphSpec(), size: node.bounds.size,
-                      box: node.paragraphBox(), scale: node.window?.backingScaleFactor ?? 2)
+                      box: node.paragraphBox(), scale: node.pixelScale ?? 2)
     }
 
     private func prepare(_ node: NodeView, key: TextRasterKey) -> TextRasterJob? {
@@ -56,7 +56,7 @@ final class TextRasterizer {
         return TextRasterJob(source: source.copy() as! NSAttributedString,
                    ranges: geometry.ranges, baselines: geometry.baselines,
                    flush: key.spec.align == 1 ? 0.5 : key.spec.align == 2 ? 1 : 0, whiteSpace: key.spec.whiteSpace, justifies: key.spec.align == 3, insets: paragraph?.insets ?? LineInsets(key.spec, source: source),
-                   box: key.box, size: key.size, scale: key.scale, ellipsis: key.spec.ellipsis, clamped: geometry.clamped,
+                   box: key.box, size: key.size, scale: key.scale, lineScale: engine.lineScale, ellipsis: key.spec.ellipsis, clamped: geometry.clamped,
                    shadow: key.spec.hdrShadow.map(TextRunShadow.init), antialiased: key.spec.antialiased,
                    measuredGlyphs: key.spec.color.count == 4 ? engine.measuredGlyphs(key.spec, width: key.box.width) : nil,
                    measuredColor: TextEngine.color(key.spec.color).cgColor)
@@ -213,7 +213,7 @@ extension NodeView {
     /// paragraphs too large to paint at once. HDR text is never small: only a
     /// raster's layers follow `dynamic-range-limit` (LLP 1100 D8).
     var textIsSmall: Bool {
-        let scale = window?.backingScaleFactor ?? 2
+        let scale = pixelScale ?? 2
         guard bounds.width * bounds.height * scale * scale < TextRasterizer.minPixels else { return false }
         return !(isParagraph && paragraphHeadroom(drawing: true) > 1)
     }
@@ -241,7 +241,7 @@ extension NodeView {
             needsDisplay = true
             return
         }
-        if let key = textRasterKey, key.size == bounds.size && key.box == contentBox() { return }
+        if let key = textRasterKey, key.size == bounds.size && key.box == paragraphBox() { return }
         textRasterKey = nil
         textRasterPending = false
         // Position the accepted surface at its original dimensions immediately;

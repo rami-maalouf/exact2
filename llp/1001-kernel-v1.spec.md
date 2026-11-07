@@ -628,11 +628,11 @@ with PR #47, with Charlie's rulings of 2026-09-27 where he made them; the
 - **`corner-shape: -exact-continuous`**, bit 153 ([LLP 1077 D1](1077-css-visual-properties-native-draws-cheaply.rfc.md)),
   is not a CSS keyword. It names Apple's continuous corner curve, one shape on
   every host: UIKit and AppKit draw it with `cornerCurve = .continuous` where
-  the box has one radius, and the kernel's outline (`corner::outline`, fitted
-  to UIKit's curve; Linux against the iOS simulator: mean 0.57/255) everywhere
-  else. The web draws `superellipse(1.6)` over the radius scaled by 1.52, the
-  closest CSS shape (2.5% of the radius at worst; a bordered box measured mean
-  6.5/255 against UIKit), and a bound (dynamic) `corner-shape` is not rescaled.
+  the box has one radius, and the kernel's outline (`corner::outline`, UIKit's
+  curve for a radius the box has room for) everywhere else. The web draws
+  `superellipse(1.6)` over the radius scaled by 1.52 (3% of the radius from
+  Apple's curve at worst; a bordered box measured mean 6.5/255 against UIKit),
+  and a bound (dynamic) `corner-shape` is not rescaled.
   CSS's own keywords are CSS's on every host. The inner border edge of any
   shaped corner is the same shape over the padding box's radii, CSS's rule for
   round corners.
@@ -660,10 +660,12 @@ with PR #47, with Charlie's rulings of 2026-09-27 where he made them; the
   the axis at once where CSS slerps. Linux draws a 3D box as a picture warped
   on the CPU.
 - **Apple's affordances** ([LLP 1077 §5](1077-css-visual-properties-native-draws-cheaply.rfc.md)),
-  rows 162–170, are not CSS: `-exact-symbol-rendering`, `-exact-symbol-palette`,
+  rows 162–170 and 228, are not CSS: `-exact-symbol-rendering`, `-exact-symbol-palette`,
   `-exact-symbol-value`, `-exact-symbol-effect` (with the `symbolEffectValue` prop),
   `-exact-press-haptic` (host-owned as `-exact-press-scale`), `-exact-content-transition`,
-  `-exact-scroll-edge-effect`, `-exact-hover-effect` and `-exact-smart-invert`. Each draws on the
+  `-exact-scroll-edge-effect`, `-exact-hover-effect`, `-exact-smart-invert` and
+  `-exact-tint-adjustment` (UIKit's `tintAdjustmentMode`; no host but iOS and
+  tvOS dims a tint). Each draws on the
   platform that has it; the web writes no declaration for them and draws a
   symbol monochrome. `-exact-press-haptic` alone has a web arm: the pressed
   element's `--exact-press-haptic`, which the input glue plays at the press

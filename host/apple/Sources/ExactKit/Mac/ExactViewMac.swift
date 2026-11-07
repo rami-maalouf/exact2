@@ -262,13 +262,15 @@ public final class ExactView: NSView {
         session.presenter.menus.layout()
         let size = session.presenter.viewportSize
         guard size.width > 0, size.height > 0 else { return }
-        let scale = window?.backingScaleFactor ?? 1
+        let scale = session.devicePixelScale
         session.rasters.fit(size: size, scale: scale)
         if scale != lastDisplayScale {
             lastDisplayScale = scale
             session.apply(session.runtime.canvasDisplay(scale: scale, memory: ProcessInfo.processInfo.physicalMemory))
             session.rasters.displayChanged()
-            session.tellDisplayScale() // a hairline is one device pixel of this display (LLP 1115.000 D10.3)
+            session.controlTextChanged() // text line boxes round to the page's device pixels (LLP 1008 §3)
+            session.tellDisplayScale() // a hairline is one device pixel of the page (LLP 1115.000 D10.3)
+            session.presenter.regridAll() // every box on the new device pixels (`PixelGridMac.swift`)
         }
         if !session.booted {
             // A refused boot is terminal (LLP 1031 D8): the session says why
@@ -293,6 +295,13 @@ public final class ExactView: NSView {
         super.viewDidChangeBackingProperties()
         session.controlTextChanged()
         fit()
+    }
+
+    /// The page zoom moved (ZoomMac.swift): the viewport is another size in
+    /// CSS px, its device pixels another scale, and its insets other lengths.
+    func zoomChanged() {
+        fit()
+        syncInsets()
     }
 
     public override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -340,6 +349,8 @@ public final class ExactView: NSView {
                     source.pointerReleased(event)
                 }
                 guard self.session.presenter.hosts(event.window) else { return event }
+                // The reader's press in a list, before any handler here can make a request in answer.
+                self.session.presenter.collections.heard(event)
                 // A window may hold several sessions: the one under the pointer steps its history.
                 if event.type == .otherMouseUp, event.window === self.window,
                    self.bounds.contains(self.convert(event.locationInWindow, from: nil)) { self.session.presenter.historyButton(event) }
@@ -394,20 +405,24 @@ public final class ExactView: NSView {
     public func syncInsets() {
         if session.runtime.holds("insets(top:right:bottom:left:)") { return } // (owed, as `fit`: ResetGate)
         if session.presenter.deferGeometry({ [weak self] in self?.fit() }) { return }
-        let next = viewportFit == "cover" ? safeAreaInsets : NSEdgeInsetsZero
+        // In CSS px: the view's points over the page zoom, as a browser's `env()` lengths are.
+        let zoom = session.presenter.viewport.magnification
+        func css(_ points: CGFloat) -> CGFloat { points / zoom }
+        let safe = viewportFit == "cover" ? safeAreaInsets : NSEdgeInsetsZero
+        let next = NSEdgeInsets(top: css(safe.top), left: css(safe.left), bottom: css(safe.bottom), right: css(safe.right))
         let prev = session.presenter.insets
         if next.top != prev.top || next.left != prev.left || next.bottom != prev.bottom || next.right != prev.right {
             session.presenter.insets = next
             session.insets(top: next.top, right: next.right, bottom: next.bottom, left: next.left)
         }
         guard session.booted else { return }
-        let regions = LayoutRegionsMac.insets(of: self)
+        let regions = LayoutRegionsMac.insets(of: self).map(css)
         if !regionsTold || regions != session.presenter.regions {
             regionsTold = true
             session.presenter.regions = regions
             session.regions(regions)
         }
-        let area = TitleBarAreaMac.rect(of: self, cover: viewportFit == "cover" || controlsOverlay, overlay: controlsOverlay)
+        let area = TitleBarAreaMac.rect(of: self, cover: viewportFit == "cover" || controlsOverlay, overlay: controlsOverlay)?.map(css)
         if !titlebarTold || area != session.presenter.titlebarArea {
             titlebarTold = true
             session.presenter.titlebarArea = area

@@ -13,6 +13,22 @@ This list holds what the [agent guide](contract-for-agents.md)'s rules don't mak
 
 ## Layout
 
+- **A layout-region inset is not a page gutter.** The web can report zero
+  for `env(-exact-readable-content-corners-inset-left)` and its right-edge equivalent. Give reading
+  content ordinary padding inside the safe region, and bound a full-width
+  field with `box-sizing="border-box"`: its native padding and border otherwise
+  extend beyond the authored width. (Duo Lab, 2026-11-04.)
+
+- **`gap`, `row-gap` and `column-gap` accept numeric lengths, not `calc()` or `env()`.**
+  The compiler rejects a segment-based gap with `lower-attr-value: expected
+  nonnegative number`. Place fold panes by segment edges in a container aligned
+  with the viewport. Global segment lengths used as flex bases shrink across
+  the hinge if a header or footer reduces the container's space. Put that chrome
+  inside a pane, and end a bottom pane at `bottom: 0`. For side-by-side
+  panes, automatic left/right insets with flex start/end alignment preserve
+  reading order; fixed width plus both physical insets overconstrains RTL.
+  Keep the same pane instances while their positions change. (Duo Lab, 2026-11-05.)
+
 - **In the web build, a view that leaves with an exit animation can jump as it starts
   to fade.** Symptom: the leaving view starts its exit higher or lower than it was,
   when the same action also changes its parent's layout, such as a top padding that is
@@ -378,6 +394,11 @@ This list holds what the [agent guide](contract-for-agents.md)'s rules don't mak
   round 30's grader named it. Fix: rows under a screen's own content are a
   `listStyle="plain"` list on the page's white, as the Clock's laps are; keep
   inset-grouped for a list that is the whole screen.
+- **A native sidebar separator needs another touch to redraw.** UI Gallery reloaded
+  its static table during row selection and selected the same row again. Keep the
+  cells and update selection only when it changes; reload when the row data changes.
+  The Gallery's native tests check row reuse during selection and compare the sidebar
+  before and after an extra background touch (`apps/ui-gallery/tests/GalleryUITests.swift`).
 - **A sideways swipe on a row opens it.** Cause: the row has no swipe actions. A
   `UITableView` or SwiftUI `List` row with none is selected by a horizontal drag of any
   length or speed, and one with trailing actions only is selected by a rightward drag;
@@ -395,6 +416,15 @@ This list holds what the [agent guide](contract-for-agents.md)'s rules don't mak
   moved. (Round r21 watchlist, measured with the scroll-feel probe, 2026-10-26.)
 
 ## Native presentation and navigation (iOS)
+
+- **A pushed route never flies by `sharedElement`: the card stays mounted beneath.** A
+  name pairs only when one commit destroys its holder and creates another
+  (`kernel/src/handoff.rs`); a push keeps the screen beneath in the stack, so the card is
+  never destroyed and the product's photo lands without a flight. The platform's way is the
+  zoom: `navigationSource=` on the pushed route's `navigationKey` column, naming the `id`
+  on the card's `image` and on the route's own (`ZoomPushIOS.swift`, iOS 18 and later). The
+  agent's filmed screenshots skip UIKit's push and zoom: record the simulator
+  (`xcrun simctl io booted recordVideo`) and read its frames.
 
 - **A cold launch flashes the wrong colour, and no screenshot shows it.** The launch
   screen is `host.ios.launchImage` centred on `background_color` (`background_color_dark`
@@ -824,6 +854,10 @@ price: answers arrive `Later`, outside the action's transaction (LLP 1027.002 D1
 
 ## Actions
 
+- **App resources belong in the root component.** A child can declare a reserved
+  viewport reader, but an app source there fails with `type-child-resource`.
+  Declare the resource in the root and pass the value the child needs as a prop.
+
 - **A send reads a derive from before the action's writes.** An action's writes
   commit together; reading a derive after assigning one of its inputs still reads
   the previous commit's derive. Build the next record explicitly for the send,
@@ -1206,9 +1240,9 @@ price: answers arrive `Later`, outside the action's transaction (LLP 1027.002 D1
   Apple's agent samples through `CALayer.render(in:)`, which does not reproduce
   every compositor effect. On iOS 27, a native `CAGradientLayer` from 1× to 4×
   white also captures as 1, and layer shadows disappear from that capture.
-  Compare the layer's colors and range with Color Gallery's UIKit reference,
+  Compare the layer's colors and range with UI Gallery's UIKit reference,
   then inspect the displayed screen through iPhone Mirroring. A float capture
-  alone cannot judge those effects. (Color Gallery, iPhone 16 Pro, 2026-10-27.)
+  alone cannot judge those effects. (UI Gallery, iPhone 16 Pro, 2026-10-27.)
 
 - **A build's refusals do not say "error".** A compile refusal prints as
   `app.contract:5:13 [lower-attr-value] symbol \`warning\` is not a role; …` and the
@@ -1507,14 +1541,14 @@ price: answers arrive `Later`, outside the action's transaction (LLP 1027.002 D1
   "screenshot s.png"`; find targets with `tree`, or `tree --ax` for the
   accessibility tree. (Exact-new iOS app feedback, 2026-10-04.)
 
-- **`build.mjs --ios … --phone <udid>` installed onto someone else's simulator.**
-  Cause: a simulator build reads `--sim` (or `EXACT_SIM`); `--phone` is the
-  device's, so it fell back to a booted iPhone, another drive's
-  (2026-10-09). `agent ios` and `smoke.mjs ios` choose the same way. Now a
-  choice among several booted iPhones is refused, naming the caller's way to
-  choose; fix: always pass
-  `--sim <udid>` to `build.mjs` and set `EXACT_SIM=<udid>` for the agent and
-  the smokes.
+- **An iOS build replaced the app another session was driving.** Simulator
+  builds use `--sim` or `EXACT_SIM`; `--phone` names a physical device.
+  Without an explicit simulator, selection can reuse one with the app
+  installed. Git worktrees share an app's bundle ID, so this can select
+  another worktree's simulator. Create a simulator for each concurrent
+  worktree with `xcrun simctl create "<name>" <device-type> <runtime>` and
+  set `EXACT_SIM=<udid>` for its builds, tests, verification and agent runs.
+  Pass `--sim <udid>` when invoking `build.mjs` directly.
 
 - **`tap <row>` pressed a link card, Like or Repost inside the row.** Cause: a
   plain tap aimed at the row's middle, and a finger there presses the deepest
@@ -1723,6 +1757,15 @@ price: answers arrive `Later`, outside the action's transaction (LLP 1027.002 D1
   then captures the content column only). (Harmony, 2026-10-21.)
 
 ## Websites
+
+- **A photo that should fly between two pages stays put while the page beneath is
+  mounted.** On the web as natively, a `sharedElement` name pairs only when the leaver is
+  destroyed and the arriver created in one commit. A site that keeps every stack entry's
+  content (`for e in t.stack`) destroys nothing on a push. Keep each route's `navigationKey`
+  column mounted (the host's Back needs the route beneath) and put its content under
+  `if inApp or e.id == top(nav).id`: in a browser the card leaves as the product arrives, and
+  `shared.js` runs a view transition. A Back or Forward lands at once, without the flight
+  (`issues/20261103-web-history-traversal-forgoes-shared-element-flight.md`).
 
 - **`pages=` on a `render=build` route renders no pages in an app without a Rust render
   entry.** A route `product "/product/:id" render=build pages=productPages()` compiles, and
@@ -1958,7 +2001,7 @@ are in [game-pitfalls.md](game-pitfalls.md).
   one another.** `element.diagnostics` is scoped to the hatch word. The session
   keeps 16 published names, with at most 4,096 bytes per value. Group repeated
   instances under a stable name, for example `publish("gradient", {standard: ..., constrained:
-  ..., noLimit: ...})`, and keep each payload within that bound. (Color Gallery's
+  ..., noLimit: ...})`, and keep each payload within that bound. (UI Gallery's
   27 paint probes, 2026-10-27; `HatchDiagnostics.swift`.)
 
 - **A native view's frame ticket left on costs CPU on a still screen.** A

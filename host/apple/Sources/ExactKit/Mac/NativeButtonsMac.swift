@@ -55,6 +55,7 @@ final class NativeButtonCellMac: NSButtonCell {
 final class NativeButtonMac: NSButton {
     override class var cellClass: AnyClass? { get { NativeButtonCellMac.self } set {} }
     weak var owner: NodeView?
+    override var focusRingMaskBounds: NSRect { uncovered(super.focusRingMaskBounds) }
     override func accessibilityAttributeValue(_ attribute: NSAccessibility.Attribute) -> Any? {
         if attribute.rawValue == "AXEnabled", owner?.ariaUnavailable == true { return false }
         return super.accessibilityAttributeValue(attribute)
@@ -114,8 +115,9 @@ final class NativeButtonMac: NSButton {
         // Space presses the focused control. Return is the default button's
         // (LLP 1115.000 D7.3): a dialog's took it before it came here
         // (`DialogHost.key`), and a merely focused button does nothing with
-        // it. A menu's row chooses on it (`choosesOnReturn`).
-        if name == " " || name == "Enter" && owner.choosesOnReturn {
+        // it. A menu's row, or a button its author opted in, presses on it
+        // (`pressesOnReturn`).
+        if name == " " || name == "Enter" && owner.pressesOnReturn {
             performClick(nil)
             return
         }
@@ -273,7 +275,6 @@ extension ControlHost {
         let button = NativeButtonMac(title: "", target: nil, action: nil)
         button.owner = node
         button.refusesFirstResponder = false
-        button.focusRingType = .default
         return button
     }
 

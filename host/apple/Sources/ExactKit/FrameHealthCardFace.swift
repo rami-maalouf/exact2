@@ -14,11 +14,13 @@ enum FrameHealthCardFace {
         var status = Status.idle
         var request = ("No rate requested", "")
         var display = ""
-        /// Two rows, each a window's name, frame rate in whole frames per second, and missed frames
-        var rows = [("Last 0.5s", "—", "—"), ("Last 5s", "—", "—")]
+        /// Two rows, each a window's name, frame rate in whole frames per second, and missed frames, or late ones where
+        /// the card measures the screen, which `unit` names
+        var rows = [("Last 0.5s", "—", "—"), ("Last 5s", "—", "—")], unit = "missed"
         var pacing = ("—", "")
-        /// The window pacing covers: "last 5s", or the span it actually covers
-        var pacingWindow = "last 5s"
+        /// What the line under the figures gives, pacing or, where the card measures the screen, the main thread's work,
+        /// and the window it covers: "last 5s", or the span it actually covers
+        var pacingName = "Pacing", pacingWindow = "last 5s"
         var table = false
         /// Details shows in place of everything below the header
         var showsDetails = false
@@ -44,12 +46,28 @@ enum FrameHealthCardFace {
         var compact = false
         /// With Details in place of everything below the header
         var showsDetails = false
-        /// Close and Share sit in the card's top corners, and Details beside Share
-        var close: CGRect { CGRect(x: 6, y: 6, width: 32, height: 32) }
-        var share: CGRect { CGRect(x: width - 38, y: 6, width: 32, height: 32) }
-        var details: CGRect { CGRect(x: width - 74, y: 6, width: 32, height: 32) }
-        /// The title is the definitions button, with 4 points of fill on either side of its text
-        var title: CGRect { CGRect(x: 40, y: 6, width: ceil(FrameHealthCardDrawing.width("Frame health", FrameHealthCardFace.title)) + 8, height: 32) }
+        /// The radii of the card's top corners, which round with the screen's in a corner of it
+        var corners: (topLeft: CGFloat, topRight: CGFloat) = (12, 12)
+        /// Close and Share sit in the card's top corners, and Details beside Share. Close moves in from a rounder
+        /// top-left corner as far as the room the title leaves it.
+        var close: CGRect { CGRect(x: 6 + min(Self.adaptation(corners.topLeft), closeRoom), y: 6, width: 32, height: 32) }
+        var share: CGRect { CGRect(x: width - 38 - trailingInset, y: 6, width: 32, height: 32) }
+        var details: CGRect { CGRect(x: width - 74 - trailingInset, y: 6, width: 32, height: 32) }
+        /// The title is the definitions button, with 4 points of fill on either side of its text. It stands 2 points plus
+        /// Close's room from Close, so Close can move in without moving it.
+        var title: CGRect { CGRect(x: 40 + closeRoom, y: 6, width: Self.titleWidth, height: 32) }
+        private static let titleWidth = ceil(FrameHealthCardDrawing.width("Frame health", FrameHealthCardFace.title)) + 8
+        /// How far Close can move in from a rounded corner before it would come within 2 points of the title: 6 points of
+        /// the header's slack, or as much as a narrower card has
+        var closeRoom: CGFloat { min(6, slack) }
+        /// How far Details and Share move in from a rounder top-right corner, within the slack Close's room leaves
+        var trailingInset: CGFloat { min(Self.adaptation(corners.topRight), slack - closeRoom) }
+        /// The header's spare width, with the title 2 points from Close and the status 2 points from Details
+        private var slack: CGFloat { max(0, (width - 74) - (40 + Self.titleWidth + 4 + 79) - 2) }
+        /// How far a corner rounder than 12 points moves the controls beside it in: 0.29 of the difference, as UIKit's
+        /// corner adaptation moves content (`edgeInsets(for: .margins(cornerAdaptation:))`), since Apple's curve
+        /// crosses a corner's diagonal 0.29 radii in from each edge
+        private static func adaptation(_ radius: CGFloat) -> CGFloat { max(0, radius - 12) * 0.2915 }
         var status: CGRect { CGRect(x: title.maxX + 4, y: 8.5, width: 79, height: 27) }
         var segments: (CGRect, CGRect) {
             let charts = ceil(FrameHealthCardDrawing.width("Charts", body)) + 18, table = ceil(FrameHealthCardDrawing.width("Table", body)) + 18
@@ -95,32 +113,39 @@ enum FrameHealthCardFace {
         func velocity(releasedAt time: TimeInterval) -> CGVector { time - last.1 > 0.05 ? .zero : velocity }
     }
 
-    /// The spring that carries a released card to its corner: a 0.4 s response, damped to 0.8 of
-    /// critical, with a unit mass
+    /// A 0.4-second spring response with a damping ratio of 0.8 and unit mass
     static let spring = (stiffness: pow(2 * CGFloat.pi / 0.4, 2), damping: 2 * 0.8 * (2 * CGFloat.pi / 0.4))
 
-    /// The corner of an area the card rests in, in that area's coordinates.
-    struct Corner: Equatable {
-        var maxX = false, maxY = false
-        init(maxX: Bool = false, maxY: Bool = false) { (self.maxX, self.maxY) = (maxX, maxY) }
-        /// The corner nearest where a card released at `origin` and `velocity` would come to rest
-        /// under the platform's normal deceleration, as Picture in Picture chooses its corner
-        /// ([Designing Fluid Interfaces](https://developer.apple.com/videos/play/wwdc2018/803/)).
+    /// Store fractions of the card's available travel to preserve its position along an edge when the window
+    /// or card resizes.
+    struct Position {
+        var x: CGFloat, y: CGFloat
+        init(x: CGFloat = 0, y: CGFloat = 0) { (self.x, self.y) = (x, y) }
+
         init(nearest origin: CGPoint, velocity: CGVector, size: CGSize, in area: CGRect) {
-            // `UIScrollView.DecelerationRate.normal` keeps 0.998 of the velocity each millisecond
+            // Project the release using normal scroll deceleration: 0.998 of the velocity each millisecond
             let glide = 0.998 / (1 - 0.998) / 1000
-            maxX = origin.x + size.width / 2 + velocity.dx * glide > area.midX
-            maxY = origin.y + size.height / 2 + velocity.dy * glide > area.midY
+            let width = max(0, area.width - size.width), height = max(0, area.height - size.height)
+            let dx = min(width, max(0, origin.x + velocity.dx * glide - area.minX))
+            let dy = min(height, max(0, origin.y + velocity.dy * glide - area.minY))
+            x = width > 0 ? dx / width : 0
+            y = height > 0 ? dy / height : 0
+            let horizontal = min(dx, width - dx), vertical = min(dy, height - dy)
+            if horizontal <= vertical {
+                x = dx <= width / 2 ? 0 : 1
+            } else {
+                y = dy <= height / 2 ? 0 : 1
+            }
         }
+
         func origin(of size: CGSize, in area: CGRect) -> CGPoint {
-            CGPoint(x: maxX ? max(area.minX, area.maxX - size.width) : area.minX,
-                y: maxY ? max(area.minY, area.maxY - size.height) : area.minY)
+            CGPoint(x: area.minX + x * max(0, area.width - size.width),
+                y: area.minY + y * max(0, area.height - size.height))
         }
     }
 
-    /// Where a dragged card is drawn when the press would carry its origin to `origin`: there, within
-    /// `area`, and past an edge only part of the way, following the press less the further it goes, as
-    /// a scroll view resists past its content. On release the card springs back to a corner of `area`.
+    /// Follow the press within `area` and resist movement past its edges like a scroll view. On release, the card
+    /// springs back to an edge.
     static func resisted(_ origin: CGPoint, size: CGSize, in area: CGRect) -> CGPoint {
         func axis(_ value: CGFloat, _ low: CGFloat, _ high: CGFloat, _ span: CGFloat) -> CGFloat {
             let high = max(low, high)
@@ -132,12 +157,17 @@ enum FrameHealthCardFace {
             y: axis(origin.y, area.minY, area.maxY - size.height, area.height))
     }
 
-    /// Draw the header, context, figures, pacing and, unless compact, the toolbar into `width` × 206 points.
-    static func draw(_ ctx: CGContext, width: CGFloat, compact: Bool, state: State, palette p: FrameHealthCardDrawing.Palette) {
-        let layout = Layout(width: width, compact: compact)
+    /// Draw the header, context, figures, pacing and, unless compact, the toolbar into the layout's width × 206 points.
+    static func draw(_ ctx: CGContext, _ layout: Layout, state: State, palette p: FrameHealthCardDrawing.Palette) {
+        let (width, compact, corners) = (layout.width, layout.compact, layout.corners)
         ctx.setFillColor(p.background)
         ctx.fill(CGRect(x: 0, y: 0, width: width, height: 206))
         typealias D = FrameHealthCardDrawing
+        // A button's fill keeps 2 points within the card's outline, so in a rounded corner its outer corner follows the card's
+        ctx.saveGState()
+        let inner = CGRect(x: 2, y: 2, width: width - 4, height: (compact ? compactHeight : height) - 4)
+        ctx.addPath(D.continuous(inner, radii: [corners.topLeft - 2, corners.topRight - 2, 10, 10]))
+        ctx.clip()
         for (control, rect) in [(Control.close, layout.close), (.title, layout.title), (.details, layout.details), (.share, layout.share)] {
             // Details keeps the status's fill while it shows, as a toggled button does
             let shown = control == .details && state.showsDetails
@@ -145,9 +175,10 @@ enum FrameHealthCardFace {
                 : state.hovered == control ? shown ? p.statusHover : p.iconHover : shown ? p.statusFill : nil
             guard let fill else { continue }
             ctx.setFillColor(fill)
-            ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil))
+            ctx.addPath(D.continuous(rect, radius: 8))
             ctx.fillPath()
         }
+        ctx.restoreGState()
         Symbol.close.draw(ctx, in: layout.close.insetBy(dx: 6.6, dy: 6.6), color: p.secondary)
         D.text(ctx, "Frame health", x: layout.title.minX + 4, y: 22, title, p.label, .left)
         Symbol.details.draw(ctx, in: layout.details.insetBy(dx: 6.6, dy: 6.6), color: p.secondary)
@@ -182,10 +213,10 @@ enum FrameHealthCardFace {
             D.text(ctx, row.1, x: 78 + digits, y: y, strong, p.label, .right)
             D.text(ctx, "FPS", x: 78 + digits + 3.6, y: y, body, p.label, .left)
             D.text(ctx, row.2, x: 162 + count, y: y, strong, p.label, .right)
-            D.text(ctx, "missed", x: 162 + count + 3.6, y: y, body, p.label, .left)
+            D.text(ctx, state.unit, x: 162 + count + 3.6, y: y, body, p.label, .left)
         }
         separator(ctx, y: 125, width: width, p)
-        let label = "Pacing (\(state.pacingWindow))", verdict = 12 + D.width(label, body) + 3.6
+        let label = "\(state.pacingName) (\(state.pacingWindow))", verdict = 12 + D.width(label, body) + 3.6
         D.text(ctx, label, x: 12, y: 138, body, p.secondary, .left)
         D.text(ctx, state.pacing.0, x: verdict, y: 138, strong, p.label, .left, limit: width - 12 - verdict)
         D.text(ctx, state.pacing.1, x: 12, y: 154, Self.digits, p.label, .left, limit: width - 24)
@@ -193,7 +224,7 @@ enum FrameHealthCardFace {
         // The segmented control: a track, and the chosen segment a chip of the card's ground
         let track = layout.track
         ctx.setFillColor(p.track)
-        ctx.addPath(CGPath(roundedRect: track, cornerWidth: 8, cornerHeight: 8, transform: nil))
+        ctx.addPath(D.continuous(track, radius: 8))
         ctx.fillPath()
         let (charts, table) = layout.segments
         for (rect, name, control, chosen) in [(charts, "Charts", Control.charts, !state.table), (table, "Table", .table, state.table)] {
@@ -201,7 +232,7 @@ enum FrameHealthCardFace {
             let fill = chosen ? p.chip : state.pressed == control ? p.statusPressed : state.hovered == control ? p.statusHover : nil
             if let fill {
                 ctx.setFillColor(fill)
-                ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 6, cornerHeight: 6, transform: nil))
+                ctx.addPath(D.continuous(rect, radius: 6))
                 ctx.fillPath()
             }
             let w = D.width(name, body)

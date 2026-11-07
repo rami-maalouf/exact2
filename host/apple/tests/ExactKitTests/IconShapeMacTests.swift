@@ -204,6 +204,8 @@ final class IconShapeMacTests: XCTestCase {
             if fringe[i] { m.fringe += 1 } else { m.outside += 1 }
         }
         let h = moments(host, width: width), r = moments(ref, width: width)
+        XCTAssertGreaterThan(h.ink, 0, "the icon draws")
+        XCTAssertGreaterThan(r.ink, 0, "the reference icon draws")
         m.centroid = ((h.x - r.x) * (h.x - r.x) + (h.y - r.y) * (h.y - r.y)).squareRoot()
         m.spread = abs(h.spread - r.spread)
         m.coverage = abs(h.ink - r.ink) / r.ink
@@ -218,7 +220,9 @@ final class IconShapeMacTests: XCTestCase {
     // MARK: Tests
 
     /// (1) A real node, through `updateSymbol` and `layoutSymbol`, at the
-    /// probe's six origins at 1x and 2x, against the independent reference:
+    /// probe's six origins at 1x and 2x, against the independent reference
+    /// at the frame it is drawn at, on the window's pixel grid
+    /// (`PixelGridMac.swift`), as Chromium draws an SVG root at its snapped place:
     /// identical at a whole-pixel origin, the edge, centroid, spread and
     /// coverage checks at a fractional one. The old NSImageView draw, for
     /// contrast, fails them off the grid.
@@ -234,10 +238,11 @@ final class IconShapeMacTests: XCTestCase {
             for o in Self.origins {
                 let frame = Self.frame(o)
                 move(p, to: frame)
-                let ref = Self.reference(Self.ring, frame: frame, canvas: canvas, scale: scale)
+                let drawn = page.convert(node.bounds, from: node), at = drawn.origin
+                let ref = Self.reference(Self.ring, frame: drawn, canvas: canvas, scale: scale)
                 let m = Self.measure(render(page, scale: scale), ref, width: width)
-                let old = Self.measure(renderOld(Self.ring, frame: frame, scale: scale), ref, width: width)
-                let whole = (o.x * scale).rounded() == o.x * scale && (o.y * scale).rounded() == o.y * scale
+                let old = Self.measure(renderOld(Self.ring, frame: frame, scale: scale), Self.reference(Self.ring, frame: frame, canvas: canvas, scale: scale), width: width)
+                let whole = (at.x * scale).rounded() == at.x * scale && (at.y * scale).rounded() == at.y * scale
                 print(String(format: "C1 probe %.0fx origin (%.2f, %.2f)%@: host %@ | old NSImageView %@ [%@]", scale, o.x, o.y, whole ? " whole" : "",
                              m.description, old.description, old.failures.joined(separator: ",")))
                 if whole {
@@ -264,9 +269,10 @@ final class IconShapeMacTests: XCTestCase {
             for o in Self.origins {
                 let frame = Self.frame(o)
                 move(p, to: frame)
-                let ref = Self.reference(Self.evenRing, frame: frame, canvas: canvas, scale: scale, rule: .evenOdd)
+                let drawn = page.convert(node.bounds, from: node), at = drawn.origin
+                let ref = Self.reference(Self.evenRing, frame: drawn, canvas: canvas, scale: scale, rule: .evenOdd)
                 let m = Self.measure(render(page, scale: scale), ref, width: width)
-                let whole = (o.x * scale).rounded() == o.x * scale && (o.y * scale).rounded() == o.y * scale
+                let whole = (at.x * scale).rounded() == at.x * scale && (at.y * scale).rounded() == at.y * scale
                 print(String(format: "C2 even-odd %.0fx origin (%.2f, %.2f)%@: host %@", scale, o.x, o.y, whole ? " whole" : "", m.description))
                 if whole { XCTAssertTrue(m.equal, "\(scale)x \(o): every pixel equal at a whole-pixel origin, \(m)") }
                 else { XCTAssertTrue(m.passes, "\(scale)x \(o): \(m.failures) \(m)") }
@@ -363,7 +369,7 @@ final class IconShapeMacTests: XCTestCase {
         image.contentTintColor = .black; image.cell?.backgroundStyle = .emphasized
         let rep = try XCTUnwrap(image.bitmapImageRepForCachingDisplay(in: image.bounds))
         image.cacheDisplay(in: image.bounds, to: rep)
-        let drawn = try XCTUnwrap(rep.colorAt(x: rep.pixelsWide / 2, y: 2)?.usingColorSpace(.sRGB))
+        let drawn = try XCTUnwrap(rep.paintedColorAt(x: rep.pixelsWide / 2, y: 2)?.usingColorSpace(.sRGB))
         XCTAssertEqual([drawn.redComponent, drawn.greenComponent, drawn.blueComponent].map { Int(($0 * 255).rounded()) }, rgb(selected),
                        "an emphasized template cell image is the selected item's ink whatever tinted it")
     }

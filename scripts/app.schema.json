@@ -10,7 +10,7 @@
   "properties": {
     "frame_health": {
       "type": "object",
-      "description": "Frame callback timing: core enables bounded counters on existing app clocks; production defaults to off. Presentation remains unobserved.",
+      "description": "Frame callback timing: core collects bounded counters on existing app clocks from launch, off never collects. Without a mode, a development build collects from launch and a production build only while the frame-health card shows. Presentation remains unobserved.",
       "additionalProperties": false,
       "properties": { "mode": { "enum": ["off", "core"] } }
     },
@@ -1050,14 +1050,6 @@
           }
         },
         "brownfield": { "type": "boolean" },
-        "appdrop": {
-          "description": "Publish iOS binary changes to AppDrop, after the streams (`scripts/deploy-appdrop.mjs`). `{}` makes the first such deploy create the link and write its `url` here, to commit. The update key stays out of app.json: $APPDROP_MANAGE_KEY, or the one the appdrop CLI saved. The install page offers the link for iOS when install.ios names no methods.",
-          "type": "object",
-          "properties": {
-            "url": { "type": "string", "pattern": "^https://[^/]+/d/[A-Za-z0-9]+/?$" }
-          },
-          "additionalProperties": false
-        },
         "signing": {
           "type": "object",
           "properties": {
@@ -1186,6 +1178,12 @@
         "minItems": 1,
         "items": { "type": "string", "minLength": 1 }
       }
+    },
+    "before_build": {
+      "description": "A command, as argv, that prepares files the app's builds read and its repository does not hold, such as a script that fetches photos into a folder Git ignores (`[\"bun\", \"scripts/fetch.mjs\"]`; `bun` is the Bun that runs exact.mjs, so it runs on every host). The exact.mjs `exact new` generates runs it in the app's directory, with EXACT_APP_DIR and EXACT2 set, no input and its output on stderr, before each of its verbs that builds, runs, compiles or checks the app (app-cli.mjs lists them), and before test and agent where they build first; a failure stops the verb. It runs that often, so make it finish at once when its files are there.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
     },
     "server": {
       "type": "object",

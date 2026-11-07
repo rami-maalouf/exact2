@@ -401,6 +401,8 @@ typedef struct { float width, height; uint8_t provisional; } ExactButtonMeasure;
 typedef ExactButtonMeasure (*ExactButtonMeasureFn)(void *ctx, const ExactButtonMeasureRequest *request);
 void exact_set_button_measure(ExactRuntime rt, ExactButtonMeasureFn measure);
 uint32_t exact_control_text_changed(ExactRuntime rt);
+/* LLP 1008 §3: the text engine rounds line boxes to another scale; every paragraph is measured again. */
+uint32_t exact_text_scale_changed(ExactRuntime rt);
 
 typedef struct {
     double datetime, now, relative_value;
@@ -816,9 +818,6 @@ uint32_t exact_set_page(ExactRuntime rt, uint32_t bits);
 uint32_t exact_reads_on_line(ExactRuntime rt);
 /* @ref LLP 1069.000 D3: the root font size `rem` follows, in points. */
 uint32_t exact_set_root_font_size(ExactRuntime rt, double px);
-/* @ref LLP 1021 §5.3: the host's zoom over the root size, the app's own
- * included (the Mac's View ▸ Actual Size, Zoom In, Zoom Out); after boot. */
-uint32_t exact_set_root_font_zoom(ExactRuntime rt, double factor);
 /* @ref LLP 1115 D6, LLP 1115.000 D13.4: whether a confirmation's rows are an
  * alert's (explanatory text, one cancel, at most three buttons): 1 or 0. The
  * kernel's rule, which lowering and the Linux host read too; needs no runtime. */

@@ -49,10 +49,12 @@ extension NodeView {
     /// 70 ms a frame for its first ten). At that speed a frame is a blur of
     /// rows the next replaces, so the list cuts to two screens from the top,
     /// the one frame of rows any jump costs, and UIKit glides the rest, which
-    /// the pump leads as it does any scroll.
+    /// the pump leads as it does any scroll. The tap is the reader's move of
+    /// the list (`CollectionHost.readerMoves`).
     @objc package func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
         guard scrollView === self.scrollView, let collections = presenter?.collections,
               let entry = collections.entries[id], !entry.snapshot.horizontal else { return true }
+        collections.readerMoves(id)
         let top = -scrollView.adjustedContentInset.top, glide = scrollView.bounds.height * 2
         guard scrollView.contentOffset.y - top > glide * 1.5 else { return true }
         collections.userIntent(id)
@@ -71,7 +73,12 @@ extension Presenter {
         while !level.isEmpty, depth < 8 {
             depth += 1
             if let hit = level.first(where: { $0.scrollView != nil && $0.scrollsVertically }) { return hit }
-            level = level.flatMap { $0.container.subviews.compactMap { $0 as? NodeView }.filter { !$0.isHidden } }
+            level = level.flatMap { node -> [NodeView] in
+                #if os(iOS)
+                if #available(iOS 27.1, *), let panes = node.presenter?.arrangements.panes(in: node) { return panes.filter { !$0.isHidden } }
+                #endif
+                return node.container.subviews.compactMap { $0 as? NodeView }.filter { !$0.isHidden }
+            }
         }
         return nil
     }

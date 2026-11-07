@@ -35,6 +35,116 @@ afterAll(async () => {
   server?.stop(true);
 }, 60_000);
 
+test('paging keeps unchanged keyed row measurements and defers new overscan', async () => {
+  const result = await evaluate(`(async () => {
+    const el = document.createElement('div');
+    el.style.cssText = 'height:320px;width:400px;overflow:auto';
+    document.getElementById('exact-root').append(el);
+    const rows = rt.sig(Array.from({length:100}, (_, i) => [i, 'message ' + i, 32]));
+    let constructed = 0;
+    const own = rt.scope(() => list.vl(el, rows, item => item()[0], (wrapper, item, index) => {
+      constructed++;
+      const row = document.createElement('div'); wrapper.append(row);
+      rt.P(row, 'text', () => item()[1]);
+      rt.S(row, 'height', 'px', () => item()[2] + (item()[0] === 55 ? index() : 0));
+    }, {est:32, pw:[], ph:[320]}));
+    rt.settled();
+    await exact.lists.pending(); await exact.lists.settle();
+    await new Promise(resolve => { el.addEventListener('scroll', resolve, {once:true}); el.scrollTop = 1600; });
+    await exact.lists.settle();
+    const c = el.$list;
+    const before = new Map(c.mounted.map(m => [m.key, { epoch:m.epoch, element:m.wrapper }]));
+    // A page shifts every item's array position, as the TypeScript converter's answers do
+    rt.commit(() => rt.W(rows, [...Array.from({length:20}, (_, i) => [i - 20, 'older', 32]), ...rows().map(row => row.slice())]));
+    const prepended = c.mounted.filter(m => before.has(m.key)).map(m => ({
+      key:m.key,
+      sameEpoch:m.epoch === before.get(m.key).epoch,
+      sameElement:m.wrapper === before.get(m.key).element,
+      measured:c.index.measured(m.key),
+    }));
+    await exact.lists.settle();
+    const editedKey = c.mounted.find(m => m.position === c.index.rowAt(c.geometry.offset)).key;
+    const epochs = new Map(c.mounted.map(m => [m.key, m.epoch]));
+    rt.commit(() => rt.W(rows, rows().map(row => row[0] === Number(editedKey.slice(2)) ? [row[0], 'edited', 64] : row)));
+    const edited = c.mounted.filter(m => m.epoch !== epochs.get(m.key)).map(m => m.key);
+    await exact.lists.settle();
+    await new Promise(resolve => { el.addEventListener('scroll', resolve, {once:true}); el.scrollTop = 0; });
+    await exact.lists.settle();
+    const unmounted = !c.mounted.some(m => m.key === 'n:55');
+    const measuredBeforeMove = c.index.measured('n:55');
+    rt.commit(() => rt.W(rows, [[-21, 'older still', 32], ...rows()]));
+    const offscreenIndex = {unmounted, measuredBeforeMove, measuredAfterMove:c.index.measured('n:55')};
+    await exact.lists.settle();
+    const beforeReplace = constructed;
+    rt.commit(() => rt.W(rows, rows().map(row => [row[0] + 1000, row[1], row[2]])));
+    const immediate = {built:constructed - beforeReplace, pending:c.pending, visible:c.index.window(c.geometry.offset, c.geometry.port_main).visible};
+    await exact.lists.settle();
+    const settled = {built:constructed - beforeReplace, pending:c.pending};
+    rt.end(own); el.remove(); rt.settled();
+    return {prepended, edited, editedKey, offscreenIndex, immediate, settled};
+  })()`);
+  expect(result.prepended.length).toBeGreaterThan(0);
+  expect(result.prepended.filter(row => row.key !== 'n:55').every(row => row.sameEpoch && row.sameElement && row.measured)).toBe(true);
+  expect(result.prepended.find(row => row.key === 'n:55')).toMatchObject({sameEpoch:false, sameElement:true, measured:false});
+  expect(result.edited).toEqual([result.editedKey]);
+  expect(result.offscreenIndex).toEqual({unmounted:true, measuredBeforeMove:true, measuredAfterMove:false});
+  expect(result.immediate.built).toBe(result.immediate.visible[1] - result.immediate.visible[0]);
+  expect(result.immediate.pending).toBe(true);
+  expect(result.settled.built).toBeGreaterThan(result.immediate.built);
+  expect(result.settled.pending).toBe(false);
+}, 60_000);
+
+test('parent body inputs revive measured zero rows, including without a data change', async () => {
+  const result = await evaluate(`(async () => {
+    const el = document.createElement('div');
+    el.style.cssText = 'height:320px;width:400px;overflow:auto';
+    document.getElementById('exact-root').append(el);
+    const rows = rt.sig(Array.from({length:100}, (_, i) => [i])), show = rt.sig(true);
+    const own = rt.scope(() => list.vl(el, rows, item => item()[0], (wrapper, item) => {
+      const row = document.createElement('div'); wrapper.append(row);
+      rt.S(row, 'height', 'px', () => item()[0] === 0 && (!show() || rows().length === 100) ? 0 : 32);
+    }, {est:32, pw:[], ph:[320], inputs:() => [rows(), show()]}));
+    rt.settled(); await exact.lists.pending(); await exact.lists.settle();
+    const c = el.$list;
+    const state = () => ({height:c.index.h[0], measured:c.index.measured('n:0'), mounted:c.mounted.some(m => m.key === 'n:0')});
+    const initial = state();
+    rt.commit(() => rt.W(rows, [...rows(), [100]])); await exact.lists.settle();
+    const appended = state();
+    rt.commit(() => rt.W(show, false)); await exact.lists.settle();
+    const hidden = state();
+    rt.commit(() => rt.W(show, true)); await exact.lists.settle();
+    const shown = state();
+    rt.end(own); el.remove(); rt.settled();
+    return {initial, appended, hidden, shown};
+  })()`);
+  expect(result.initial).toEqual({height:0, measured:true, mounted:false});
+  expect(result.appended).toEqual({height:32, measured:true, mounted:true});
+  expect(result.hidden).toEqual(result.initial);
+  expect(result.shown).toEqual(result.appended);
+}, 60_000);
+
+test('opaque body inputs remeasure on app commits without invalidating each measurement reply', async () => {
+  const result = await evaluate(`(async () => {
+    const el = document.createElement('div');
+    el.style.cssText = 'height:320px;width:400px;overflow:auto';
+    document.getElementById('exact-root').append(el);
+    let height = 0;
+    const own = rt.scope(() => list.vl(el, () => [0, 1], item => item(), (wrapper, item) => {
+      const row = document.createElement('div'); wrapper.append(row);
+      rt.S(row, 'height', 'px', () => item() === 0 ? height : 32);
+    }, {est:32, pw:[], ph:[320], inputs:() => [], opaque:true}));
+    rt.settled(); await exact.lists.pending(); await exact.lists.settle();
+    height = 32;
+    rt.commit(() => {}); await exact.lists.settle();
+    const c = el.$list, epoch = c.index.token('n:0');
+    await exact.lists.settle();
+    const result = {height:c.index.h[0], measured:c.index.measured('n:0'), stableEpoch:epoch === c.index.token('n:0')};
+    rt.end(own); el.remove(); rt.settled();
+    return result;
+  })()`);
+  expect(result).toEqual({height:32, measured:true, stableEpoch:true});
+}, 60_000);
+
 test('a scroll event saves a row and an explicit restore survives remount and new measurements', async () => {
   const result = await evaluate(`(async () => {
     const root = document.getElementById('exact-root');
@@ -589,11 +699,274 @@ test('a page that lands within a fling\'s band re-arms reachstart', async () => 
     out.push(report(900, -4000), report(900, -4000), report(100, -4000));
     rt.commit(() => rt.W(rows, [...Array.from({length:20}, (_, i) => i - 20), ...rows()]));
     rt.settled();
-    out.push(c.correction?.offset, report(740, -4000));
+    // The page's new overscan is mounted by the first report and measured by the next
+    out.push(c.correction?.offset, report(740, -4000), report(740, -4000));
     rt.end(own); el.remove(); rt.settled();
     return out;
   })()`);
-  expect(result).toEqual([0, null, null, null, null, 740, 0]);
+  expect(result).toEqual([0, null, null, null, null, 740, null, 0]);
+}, 60_000);
+
+// into_view.rs: a request the port already satisfies is done and moves nothing; where the host's animation leaves the
+// port is unknown until a report says, and meanwhile a request waits and an update anchors nothing.
+// In the page: a list of 200 rows of 32 px in a 320 px port, mounted and settled. `report(offset, fill)` hands it a
+// host's report at `offset`, its mounted rows measured; `remove()` takes it down.
+async function rowList() {
+  const el = document.createElement('div');
+  el.style.cssText = 'height:320px;width:400px;overflow:auto';
+  document.getElementById('exact-root').append(el);
+  const rows = rt.sig(Array.from({length:200}, (_, i) => i));
+  const own = rt.scope(() => list.vl(el, rows, i => i(), (w, i) => {
+    const row = document.createElement('div'); row.textContent = String(i()); row.style.height = '32px'; w.append(row);
+  }, {est:32, pw:[], ph:[320]}));
+  rt.settled();
+  await exact.lists.pending(); await exact.lists.settle();
+  const c = [...exact.lists.internals.Lists.values()].find(c => c.el === el);
+  const report = (offset, fill = {}) => {
+    const f = { ...c.geometry, revision: c.revision, scroll_sequence: c.geometry.scroll_sequence + 1, offset,
+      measurements: c.mounted.map(m => ({ view: m.view, epoch: m.epoch, size: 32 })) };
+    const byView = c.prepare(f);
+    if (byView) c.feedback(f, byView, { limit: null, ...fill });
+  };
+  return { c, rows, report, remove() { rt.end(own); el.remove(); rt.settled(); } };
+}
+
+// In the page: a feed of 600 posts of 40 px in a 320 px port, every tenth with a strip of 300 cards (`#strip`),
+// mounted and settled. `report` and `remove()` as `rowList`'s, its rows measured where they lay out.
+async function cardFeed() {
+  const feed = document.createElement('div');
+  feed.style.cssText = 'height:320px;width:400px;overflow:auto';
+  document.getElementById('exact-root').append(feed);
+  const posts = rt.sig(Array.from({length:600}, (_, i) => i));
+  const own = rt.scope(() => list.vl(feed, posts, i => i(), (w, i) => {
+    const head = document.createElement('div'); head.textContent = String(i()); head.style.height = '40px'; w.append(head);
+    // Every tenth post has a strip of 300 cards
+    if (i() % 10 !== 0) return;
+    const strip = document.createElement('div'); strip.id = 'strip';
+    strip.style.cssText = 'display:flex;height:120px;width:400px;overflow-x:scroll;overflow-y:hidden'; w.append(strip);
+    list.vl(strip, rt.sig(Array.from({length:300}, (_, j) => j)), j => j(), (cw, j) => {
+      const card = document.createElement('div'); card.textContent = String(j()); card.style.cssText = 'width:60px;height:100px;flex:none'; cw.append(card);
+    }, {x: true, est: 100, pw: [400], ph: []});
+  }, {est: 100, pw: [], ph: [320]}));
+  rt.settled();
+  await exact.lists.pending(); await exact.lists.settle();
+  const c = [...exact.lists.internals.Lists.values()].find(c => c.el === feed);
+  const report = (offset, fill = {}) => {
+    const f = { ...c.geometry, revision: c.revision, scroll_sequence: c.geometry.scroll_sequence + 1, offset,
+      measurements: c.mounted.map(m => ({ view: m.view, epoch: m.epoch, size: m.wrapper.getBoundingClientRect().height })) };
+    const byView = c.prepare(f);
+    if (byView) c.feedback(f, byView, { limit: null, ...fill });
+  };
+  return { feed, c, report, remove() { rt.end(own); feed.remove(); rt.settled(); } };
+}
+
+test('a satisfied request moves nothing, and an unknown port holds requests and anchors until a report', async () => {
+  const result = await evaluate(`(async () => {
+    const { c, rows, report, remove } = await (${rowList})();
+    const go = n => c.intoView(c.resolve(n)[0], 'start');
+    const drop = n => { rt.commit(() => rt.W(rows, rows().filter(i => i !== n))); rt.settled(); };
+    const out = {};
+    // UIKit's deceleration reports travel and no scroll under way. Row 10 starts at 320.
+    for (let n = 0; n < 3; n++) report(320, { velocity: 2000 });
+    go(10);
+    out.satisfied = [c.status[1], c.correction, c.target];
+    // Made while the host animates, alongside the reader's scroll: it waits, and an update anchors nothing.
+    report(1000, { animating: true, scrolling: true });
+    go(5); drop(0);
+    out.unknown = [c.requestWaits(), c.correction];
+    report(450, { scrolling: true });
+    drop(1);
+    out.known = c.correction?.from != null;
+    report(450);
+    out.landed = c.correction?.offset;
+    report(96); report(96);
+    out.done = c.status[1];
+    // One that ends unconverged while the host animates leaves the port unknown too.
+    go(150);
+    for (let n = 0; n < 8; n++) report(500, { animating: true });
+    out.unconverged = c.status[1];
+    drop(2);
+    out.after = c.correction;
+    remove();
+    return out;
+  })()`);
+  expect(result).toEqual({ satisfied: ['done', null, null], unknown: [true, null], known: true, landed: 96, done: 'done',
+    unconverged: 'unconverged', after: null });
+}, 60_000);
+
+// LLP 1070.000 §6.2: a smooth request's corrections are smooth, the one that admits it and the one where its wait
+// ends; the glue runs them as the browser's smooth scroll. An "auto" request's are not.
+test('a smooth request\'s corrections are smooth, from its admission and where its wait ends', async () => {
+  const result = await evaluate(`(async () => {
+    const { c, report, remove } = await (${rowList})();
+    c.el.id = 'smooth-rows';
+    const go = behavior => rt.Hosts.scrollIntoView('smooth-rows', 150, 'start', null, behavior, null, null);
+    report(0); go('auto');
+    const auto = c.correction != null && c.correction.smooth !== true;
+    report(0); go('smooth');
+    const admitted = c.correction?.smooth === true;
+    report(0, { scrolling: true }); go('smooth');
+    const waits = c.requestWaits();
+    report(0);
+    const landed = c.correction?.smooth === true;
+    remove();
+    return { auto, admitted, waits, landed };
+  })()`);
+  expect(result).toEqual({ auto: true, admitted: true, waits: true, landed: true });
+}, 60_000);
+
+// into_view.rs `begin_into_view`: a request made while the host animates is not judged at the animation's destination,
+// which is all its reports give; the next report says where the port is.
+test('a request made during the host\'s animation is not judged at its destination', async () => {
+  const result = await evaluate(`(async () => {
+    const { c, report, remove } = await (${rowList})();
+    // Row 10 starts at 320
+    for (let n = 0; n < 2; n++) report(320, { animating: true });
+    c.intoView(c.resolve(10)[0], 'start');
+    // It waits, and the unknown port asks for the report that ends the wait (into_view.rs \`asks_report\`)
+    const waits = c.requestWaits(), asks = c.snapshot().pending && !c.pending;
+    report(200);
+    const admitted = c.correction?.offset;
+    remove();
+    return { waits, asks, admitted };
+  })()`);
+  expect(result).toEqual({ waits: true, asks: true, admitted: 320 });
+}, 60_000);
+
+// LLP 1070.000 §2.4: waiting uses none of a request's six corrections; the move that lands it where its wait ends is
+// uncounted, as the one that admits a request made at rest is.
+test('a request that waited has its six corrections after it lands', async () => {
+  const result = await evaluate(`(async () => {
+    const { c, report, remove } = await (${rowList})();
+    report(0, { scrolling: true });
+    c.intoView(c.resolve(150)[0], 'start');
+    report(0);
+    // The port never moves: each report corrects again
+    for (let n = 0; n < 6; n++) report(0);
+    const sixth = c.status[1];
+    report(0);
+    const seventh = c.status[1];
+    remove();
+    return { sixth, seventh };
+  })()`);
+  expect(result).toEqual({ sixth: 'pending', seventh: 'unconverged' });
+}, 60_000);
+
+// LLP 1070.000 §2.6: the port satisfies a request only with no mounted row unmeasured between its start and the target,
+// whose real size could still move the target.
+test('a mounted row left unmeasured before the target keeps a request from being already satisfied', async () => {
+  const result = await evaluate(`(async () => {
+    const { c, report, remove } = await (${rowList})();
+    report(0); report(0);
+    c.index.invalidateRow(c.index.order[3]);
+    c.intoView(c.resolve(5)[0], 'nearest');
+    const status = c.status[1];
+    remove();
+    return { status };
+  })()`);
+  expect(result).toEqual({ status: 'pending' });
+}, 60_000);
+
+// into_view.rs `settle_target` and `follow_into_view`: a request whose wait ends is judged as one made at rest, done
+// where the port satisfies it, otherwise admitted, which counts as its move; once it has moved the port, the
+// reader's scroll ends it, though the host reports no travel then.
+test('a request whose wait ends is judged as at rest, and the reader\'s scroll after its move ends it', async () => {
+  const result = await evaluate(`(async () => {
+    const { c, report, remove } = await (${rowList})();
+    const near = n => c.intoView(c.resolve(n)[0], 'nearest');
+    const out = {};
+    // Row 20 is 640 to 672, shown whole by a port start in [352, 640]: not at the first report, then where the
+    // reader's scroll ends
+    report(0, { scrolling: true });
+    near(20);
+    report(100, { scrolling: true });
+    out.waits = c.requestWaits();
+    report(400, { scrolling: true }); report(400);
+    out.satisfied = [c.status[1], c.correction];
+    // Row 150 is 4800 to 4832: the scroll ends at 4600 in one report, before the row is mounted, so the request is
+    // admitted there; the reader's scroll after it ends it
+    report(400, { scrolling: true });
+    near(150);
+    report(500, { scrolling: true });
+    report(4600);
+    out.admitted = c.status[1];
+    report(4700, { scrolling: true });
+    out.scrolled = [c.status[1], c.correction?.from == null ? c.correction : null];
+    // At rest a request is admitted at once and is done on its second aligned report, not its first; the reader's
+    // scroll the next report says is under way ends one
+    report(4700);
+    c.intoView(c.resolve(10)[0], 'start');
+    report(320); out.first = c.status[1];
+    report(320); out.second = c.status[1];
+    c.intoView(c.resolve(20)[0], 'start');
+    report(640, { scrolling: true });
+    out.atRest = c.status[1];
+    remove();
+    return out;
+  })()`);
+  expect(result).toEqual({ waits: true, satisfied: ['done', null], admitted: 'pending', scrolled: ['cancelled', null],
+    first: 'pending', second: 'done', atRest: 'cancelled' });
+}, 60_000);
+
+// into_view.rs's gesture: a report that says the reader began a gesture (the glue's bit 6) ends the request where the
+// reader is, whether it waits or has been admitted, and whether or not the port moved: it plans no move.
+test('a gesture a report carries cancels the request, waiting or admitted, and moves nothing', async () => {
+  const result = await evaluate(`(async () => {
+    const out = {};
+    const run = async (name, steps) => {
+      const { c, report, remove } = await (${rowList})();
+      // Row 150 is 4800 to 4832; the request is made during the reader's scroll and waits
+      report(0, { scrolling: true });
+      c.intoView(c.resolve(150)[0], 'nearest');
+      report(500, { scrolling: true });
+      out[name] = steps(report, () => [c.status[1], c.correction?.from == null ? c.correction : null]);
+      remove();
+    };
+    // The scroll ends at 4600 in one report, before row 150 is mounted, so the request is admitted there, not done
+    await run('admitted', (report, state) => { report(4600); const admitted = state()[0]; report(4600, { gesture: true }); return [admitted, ...state()]; });
+    // A gesture while the request waits, the port moving on, or where the last report left it
+    await run('waiting', (report, state) => { report(600, { scrolling: true, gesture: true }); return state(); });
+    await run('still', (report, state) => { report(500, { scrolling: true }); report(500, { scrolling: true, gesture: true }); return state(); });
+    // A gesture in the report where the wait ends
+    await run('atEnd', (report, state) => { report(4600, { gesture: true }); return state(); });
+    return out;
+  })()`);
+  expect(result).toEqual({ admitted: ['pending', 'cancelled', null], waiting: ['cancelled', null], still: ['cancelled', null],
+    atEnd: ['cancelled', null] });
+}, 60_000);
+
+test('a card refused at rest is refused with its feed\'s row left in view, as after a wait', async () => {
+  const result = await evaluate(`(async () => {
+    const { c, remove } = await (${cardFeed})();
+    const out = {};
+    // The row holds no strip; the strip holds no such card (its key refused once the feed has built the row)
+    for (const [post, card] of [[501, 150], [500, 500]]) {
+      rt.Hosts.scrollIntoView('strip', card, 'start', 'center', 'auto', post, null);
+      out[post] = [c.correction != null, c.mounted.some(m => m.position === post), c.status?.[1]?.startsWith('refused')];
+    }
+    remove();
+    return out;
+  })()`);
+  expect(result).toEqual({ 501: [true, true, true], 500: [true, true, true] });
+}, 60_000);
+
+test('a card refused after its feed waited is kept with the command\'s refusals', async () => {
+  const result = await evaluate(`(async () => {
+    const { c, report, remove } = await (${cardFeed})();
+    // The state's refusals outlive a test: this one's card is its own
+    const refused = () => exact.lists.intoView().some(s => s.list === 'strip' && s.status === 'refused: no row keyed n:777 in the list');
+    // The feed waits for the reader's scroll; the strip in post 500 holds no card 777, refused when the feed admits it
+    report(0, { scrolling: true });
+    rt.Hosts.scrollIntoView('strip', 777, 'start', 'center', 'auto', 500, null);
+    const waited = c.requestWaits();
+    report(0);
+    const out = { waited, refused: refused() };
+    c.intoView(c.resolve(3)[0], 'start');
+    out.kept = refused();
+    remove();
+    return out;
+  })()`);
+  expect(result).toEqual({ waited: true, refused: true, kept: true });
 }, 60_000);
 
 // @ref LLP 1010 §6.11 — `keep-mounted` keeps its rows mounted wherever the window is, as the runner's keep.rs.
@@ -834,4 +1207,62 @@ test('an anchor restores to its clamped offset plus its overshoot, anywhere', as
   expect(traversal.max).toBeGreaterThanOrEqual(0);
   expect([traversal.checked, traversal.finite]).toEqual([2000, 2000]);
   expect(traversal.misses).toEqual([]);
+}, 60_000);
+
+// LLP 1070.000 §2.6: Chrome carries a touch fling on through `scrollTo`, so a
+// jump to the end made while the reader's fling runs waits for the fling to
+// end, then lands. Under the agent's clock, which this page runs, the glue
+// lands a smooth request at once too (§11), so one run covers both.
+test('a jump that meets a touch fling waits for it and lands at the end', async () => {
+  const at = await evaluate(`(async () => {
+    const port = document.createElement('div'); port.id = 'fling-feed';
+    port.style.cssText = 'position:fixed;top:0;left:0;height:400px;width:300px;overflow:auto';
+    document.getElementById('exact-root').append(port);
+    const own = rt.scope(() => list.vl(port, () => Array.from({length:300}, (_, i) => i), i => i(), (w, i) => {
+      const row = document.createElement('div'); row.textContent = String(i()); row.style.height = '60px'; w.append(row);
+    }, {est:60, pw:[], ph:[400]}));
+    await exact.lists.pending(); await exact.lists.settle();
+    rt.Hosts.scrollIntoView('fling-feed', 299, null, null, 'instant', null, 1000000);
+    await exact.lists.settle();
+    for (let f = 0; f < 4; f++) await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+    globalThis.fling = {port, own};
+    return {top: port.scrollTop};
+  })()`);
+  expect(at.top).toBeGreaterThan(0);
+  // A finger dragging the content down 500 px in 60 ms, then lifting: Chrome flings on toward the start.
+  const t0 = Date.now() / 1000, x = 150, y = 100;
+  await call('Input.dispatchTouchEvent', {type:'touchStart', touchPoints:[{x, y}], timestamp:t0});
+  for (let i = 1; i <= 4; i++) {
+    await call('Input.dispatchTouchEvent', {type:'touchMove', touchPoints:[{x, y: y + 125 * i}], timestamp:t0 + 0.015 * i});
+    await new Promise(r => setTimeout(r, 15));
+  }
+  await call('Input.dispatchTouchEvent', {type:'touchEnd', touchPoints:[], timestamp:t0 + 0.068});
+  const result = await evaluate(`(async () => {
+    const {port, own} = fling;
+    const frame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+    for (let f = 0; f < 3; f++) await frame();
+    const moving = port.scrollTop, gaps = [], statuses = new Set();
+    port.addEventListener('scroll', () => gaps.push(port.scrollHeight - port.scrollTop - port.clientHeight));
+    rt.Hosts.scrollIntoView('fling-feed', 299, null, null, 'instant', null, 1000000);
+    // Until the request ends: the fling's end is the event it waits for.
+    let status = 'pending';
+    for (let f = 0; f < 600 && status === 'pending'; f++) {
+      await frame();
+      status = exact.lists.intoView().find(s => s.key === 'n:299')?.status;
+      statuses.add(status);
+    }
+    for (let f = 0; f < 10; f++) await frame();
+    const gap = port.scrollHeight - port.scrollTop - port.clientHeight;
+    rt.end(own); port.remove(); rt.settled(); delete globalThis.fling;
+    // The scroll events' distances from the end: the fling's, moving away, then the landing, after which nothing
+    // moves the port off the end.
+    const landing = gaps.findIndex((g, i) => i > 0 && g < gaps[i - 1]), coast = landing < 0 ? gaps : gaps.slice(0, landing);
+    return {moving, status, gap, landing, receding: coast.every((g, i) => i === 0 || g >= coast[i - 1]),
+      pulled: gaps.slice(gaps.lastIndexOf(0)).filter(g => g !== 0), gaps: gaps.map(Math.round).join(' ')};
+  })()`);
+  expect(result.moving).toBeLessThan(at.top - 500);
+  expect({status: result.status, gap: result.gap}).toEqual({status: 'done', gap: 0});
+  expect(result.landing).toBeGreaterThan(1);
+  expect({receding: result.receding, gaps: result.gaps}).toEqual({receding: true, gaps: result.gaps});
+  expect(result.pulled).toEqual([]);
 }, 60_000);

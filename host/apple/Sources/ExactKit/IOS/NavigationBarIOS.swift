@@ -64,6 +64,8 @@ struct HeaderShape: Equatable {
         /// (UIKit's tint, the platform default) for a colour the button
         /// only inherits or the compiler implied.
         let tint: [[Double]]?
+        /// Whether that colour is the tint itself: the item's tint then, its node's `ownAccent` or the bar's
+        let followsTint: Bool
         /// A native button's title font where its face's rows give a size or
         /// a weight (LLP 1069.011.001 D4), as its in-page control draws it:
         /// the item's title in it, so its glass fits those words. Nil is
@@ -152,9 +154,10 @@ struct HeaderShape: Equatable {
             // 1115.000 D2): a `color` written on the symbol, else a `color`
             // written on the button, a platform colour as much as a literal.
             // One the button only inherits, or a sheet wrote, is unsaid.
-            // Read from the node it is written on, undimmed: the item keeps it (TintDimmingIOS.swift)
+            // Read from the node it is written on, the tint in it as a value (`carriedTint`)
             let source = ink.flatMap { $0.0.kind == "image" && $0.0.ownColor("text_color") != nil ? $0.0 : nil } ?? (button.ownColor("text_color") != nil ? button : nil)
-            if let source, let light = source.undimmedChannels("text_color", dark: false), let dark = source.undimmedChannels("text_color", dark: true) {
+            followsTint = source?.style["text_color"]?.tintAlpha == 1
+            if !followsTint, let source, let light = source.carriedChannels("text_color", dark: false), let dark = source.carriedChannels("text_color", dark: true) {
                 tint = [light, dark]
             } else {
                 tint = nil
@@ -177,7 +180,7 @@ struct HeaderShape: Equatable {
         /// `source` but for whether the item is enabled.
         var face: String {
             if readout != nil { return source }
-            return "\(toolbarGroup.map(String.init) ?? ""):\(id):\(title):\(symbol ?? ""):\(label ?? ""):\(prominent):\(ownGlass):\(badge?.source ?? ""):\(chip?.source ?? ""):\(menu):\(menuTitle):\(tint ?? []):\(font.map { "\($0.fontName) \($0.pointSize) \(TextEngine.controlWeight($0))" } ?? ""):\(testId ?? "")"
+            return "\(toolbarGroup.map(String.init) ?? ""):\(id):\(title):\(symbol ?? ""):\(label ?? ""):\(prominent):\(ownGlass):\(badge?.source ?? ""):\(chip?.source ?? ""):\(menu):\(menuTitle):\(tint ?? []):\(followsTint):\(font.map { "\($0.fontName) \($0.pointSize) \(TextEngine.controlWeight($0))" } ?? ""):\(testId ?? "")"
         }
     }
     let header: NodeView
@@ -352,6 +355,8 @@ final class HeaderSearch: NSObject, UISearchBarDelegate, UISearchControllerDeleg
         #if !os(tvOS)
         guard let field else { return }
         let text = controller.searchBar.searchTextField
+        // The field's own tint is its node's accent: its text, placeholder and caret in the tint resolve by it
+        text.tintColor = field.ownAccent
         // Any `backgroundColor`, nil too, replaces UIKit's capsule (iOS 26, measured): written only where a design names a Field, cleared (unfilled) only where one was.
         if let ground = field.fieldGroundColor { text.backgroundColor = ground; paintsGround = true }
         else if paintsGround { text.backgroundColor = nil; paintsGround = false }
@@ -580,9 +585,10 @@ final class BarPress: NSObject {
     }
 }
 
-/// One stack Exact built: its delegate, whether its routes may show the bar
-/// (they may unless the app's `navigation` hatch says no; which of them
-/// shows it is each route's, LLP 1115.000 D5.3), and its last written controllers.
+/// One stack Exact built: its delegate, whether its routes may show the bar (they may unless the
+/// app's `navigation` hatch says no; which of them shows it is each route's, LLP 1115.000 D5.3), its
+/// last written controllers, the tint it last gave the bar, its top route's accent (nil: none), and
+/// whether a hatch tinted the bar, which Exact then leaves alone.
 final class NavigationStack {
     let proxy = NavigationDelegateProxy()
     var showsBar: Bool
@@ -590,11 +596,8 @@ final class NavigationStack {
     let label: String
     var hatched = false
     var written: [ObjectIdentifier] = []
-    init(showsBar: Bool, order: Int) {
-        self.showsBar = showsBar
-        self.order = order
-        label = "#\(order)"
-    }
+    var barTint: UIColor?, hatchTintsBar = false
+    init(showsBar: Bool, order: Int) { (self.showsBar, self.order, label) = (showsBar, order, "#\(order)") }
 }
 
 extension NavigationHost {
@@ -617,9 +620,10 @@ extension NavigationHost {
         if tabBarShows, let root = container, let tabs = NavigationTabs.of(root, presenter), let index = tabs.tabs.firstIndex(where: { $0 === node }) {
             guard !node.disabled else { return ["error": "tab #\(id) is disabled"] }
             guard before(nil), !node.disabled, !node.inert, presenter.views[node.id] === node else { return ["error": "tab #\(id) changed during its pointer handlers"] }
-            let root = reselectedRoot(index) // as the bar's own tap: the selected tab at its root scrolls to the top
+            // As the bar's own tap: the selected tab at its root scrolls to the top
+            let root = reselectedRoot(index), requests = root == nil ? nil : presenter.collections.lastRequests()
             presenter.press(node.id)
-            if let root { scrollToTop(root) }
+            if let root { scrollToTop(root, since: requests) }
             return ["tapped": id, "pressed": id, "delivery": "host-activation", "native": "tab-bar-item"]
         }
         let shown = controllers.values.filter { c in
@@ -716,7 +720,7 @@ extension NavigationHost {
         titleInk(nav)
         publish(nav)
         if presenter.session?.natives.hatchesConnected == true {
-            stack.showsBar = presenter.session?.natives.navigationHatch(nav, built: true, showsBar: stack.showsBar, label: stack.label) ?? stack.showsBar
+            stack.showsBar = hatching(nav) { presenter.session?.natives.navigationHatch(nav, built: true, showsBar: stack.showsBar, label: stack.label) } ?? stack.showsBar
             stack.hatched = true
         }
         // Hidden for a first route that shows none, before UIKit shows it;
@@ -733,7 +737,7 @@ extension NavigationHost {
         guard let natives = presenter.session?.natives, natives.hatchesConnected,
               let stack = stacks[ObjectIdentifier(nav)], !stack.hatched else { return }
         let before = barShows(nav)
-        stack.showsBar = natives.navigationHatch(nav, built: true, showsBar: stack.showsBar, label: stack.label)
+        stack.showsBar = hatching(nav) { natives.navigationHatch(nav, built: true, showsBar: stack.showsBar, label: stack.label) }
         stack.hatched = true
         guard barShows(nav) != before else { return }
         showBar(nav, animated: false)
@@ -806,8 +810,8 @@ extension NavigationHost {
             guard c.projected != signature || !c.hatched else { continue }
             c.projected = signature
             guard presenter.session?.natives.hatchesConnected == true else { continue }
-            presenter.session?.natives.routeHatch(c.hatched ? .changed : .built, controller: c, navigation: nav, scroll: scroll,
-                                                 key: c.key, dataset: dataset)
+            hatching(nav) { presenter.session?.natives.routeHatch(c.hatched ? .changed : .built, controller: c, navigation: nav, scroll: scroll,
+                                                                  key: c.key, dataset: dataset) }
             c.hatched = true
             if scroll != nil { c.ownedScroll = scroller }
         }
@@ -892,7 +896,7 @@ extension NavigationHost {
                 self.restAtTop(sv, in: c)
             }
         }
-        item.hidesBackButton = !canGoBack
+        item.hidesBackButton = shape?.authoredBack == true || (c.pushed && !canGoBack) // Keep UIKit's Back on split roots
         item.leftItemsSupplementBackButton = true
         #endif
         c.barPresses = []
@@ -1100,7 +1104,8 @@ extension NavigationHost {
         let covered: Bool
         if case .edges(let edges)? = covers[c.node.id] { covered = edges.top > 0.5 } else { covered = false }
         let ordinary = shape?.authored.isEmpty != false && node?.scrollView != nil && node === scroller ? node : nil
-        let target = !riders.isEmpty ? (covered ? nil : scroller) : ordinary
+        let arranged = scroller.flatMap { node in arrangementScrollers(in: c, top: true).contains(where: { $0 === node }) ? node : nil }
+        let target = !riders.isEmpty ? (covered ? nil : scroller) : (ordinary ?? arranged)
         if let target, !riders.isEmpty {
             let frame = target.convert(target.bounds, to: c.node)
             let band = UIEdgeInsets(top: max(0, frame.minY), left: 0, bottom: target.pageBand.bottom, right: 0)
@@ -1136,7 +1141,7 @@ extension NavigationHost {
         // The scroller left behind gets the page's offsets back only once the
         // bar follows the new one: UIKit reads its inset taken away while the
         // bar still follows it as a scroll, and closes an open large title.
-        if let old, let sv = oldView, sv !== shown {
+        if let old, let sv = oldView, sv !== shown, !arrangementInsets(sv, in: c) {
             let top = sv.contentOffset.y + old.scrollTopInset(sv)
             // The bottom edge's scroller stays UIKit's to inset (`reachBottom`).
             if old !== c.edgeScroll || sv !== old.scrollView { sv.contentInsetAdjustmentBehavior = .never }
@@ -1199,12 +1204,14 @@ extension NavigationHost {
         // the authored one: a scroller there ends that far above it. The
         // cover it has without one, so a scroller that does not grow as the
         // cover goes is at the edge either way.
-        let found = presented || presenter.viewportFit != "cover" ? Self.bottomScroller(in: c.node, cover: c.bottomClearance) : nil
+        let peers = arrangementScrollers(in: c, top: false)
+        let peer = contentScroller(of: c).flatMap { node in peers.contains(where: { $0 === node }) ? node : nil } ?? peers.first
+        let found = presented || presenter.viewportFit != "cover" ? (Self.bottomScroller(in: c.node, cover: c.bottomClearance) ?? peer) : nil
         let target = found === c.collapseScroll && Self.transparentBar(c.node) ? nil : found
         guard c.edgeScroll !== target || c.contentScrollView(for: .bottom) !== (target?.scrollView ?? c.bandedBottom) else { return }
-        if let old = c.edgeScroll, let sv = old.scrollView, old !== c.collapseScroll { sv.contentInsetAdjustmentBehavior = .never }
+        if let old = c.edgeScroll, let sv = old.scrollView, old !== c.collapseScroll, !arrangementInsets(sv, in: c) { sv.contentInsetAdjustmentBehavior = .never }
         if let previous = c.contentScrollView(for: .bottom), previous !== target?.scrollView,
-           previous !== c.collapseScrollView { previous.contentInsetAdjustmentBehavior = .never }
+           previous !== c.collapseScrollView, !arrangementInsets(previous, in: c) { previous.contentInsetAdjustmentBehavior = .never }
         c.edgeScroll = target
         let shown = shownScroll(target)
         // A scroller at its start stays there as UIKit begins to inset it.
@@ -1278,10 +1285,9 @@ extension NavigationHost {
     /// The physical backend owned by a content node.
     func shownScroll(_ node: NodeView?) -> UIScrollView? { node?.scrollView }
 
-    /// Whether UIKit insets this scroller under its bars (`.automatic`): a
-    /// route's collapse or bottom-edge scroller.
+    /// UIKit insets the route's collapse scroller, bottom-edge scroller and arranged peers
     func insetByUIKit(_ node: NodeView) -> Bool {
-        controllers.values.contains { $0.collapseScroll === node || $0.edgeScroll === node }
+        controllers.values.contains { $0.collapseScroll === node || $0.edgeScroll === node || arrangementPeers(in: $0).contains { $0 === node } }
     }
 
     /// UIKit's zero-width fixed space splits shared glass without authored metrics.
@@ -1345,7 +1351,7 @@ extension NavigationHost {
             c.barPresses.append(made.press)
             return made.bar
         }
-        let image = i.badge?.image ?? i.chip?.image(tint: (presenter.viewport as? Viewport)?.restingTint ?? presenter.viewport.tintColor) ?? i.symbol.flatMap { FaceSymbol.image($0, points: FaceSymbol.barItemPoints) }
+        let image = i.badge?.image ?? i.chip?.image(tint: presenter.views[i.id]?.carriedTint ?? presenter.viewport.tintColor) ?? i.symbol.flatMap { FaceSymbol.image($0, points: FaceSymbol.barItemPoints) }
         // The same control as last time, still a menu or not and still a
         // picture or words: its item is kept and changed, as a hand-built
         // bar's is, so the glass animates what changed (a heart filling).

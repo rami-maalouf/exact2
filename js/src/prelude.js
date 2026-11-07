@@ -16,6 +16,7 @@
   // request the app aborted.
   var host = global.__exact_host;
   delete global.__exact_host;
+  var browserSecrets = global.__exact_browser_secrets; delete global.__exact_browser_secrets;
   // The seam's bytes (binary.js): base64, UTF-8 lengths, a stream message's data.
   var binary = global.__exact_binary;
   delete global.__exact_binary;
@@ -256,6 +257,8 @@
   var PlatformCryptoKey = global.CryptoKey;
   var keysDoor = global.__exact_keys; // the web realm's IndexedDB, for kept keys
   delete global.__exact_keys;
+  var ownNativeKey = global.__exact_key;
+  delete global.__exact_key;
   var nativeKeys = new WeakMap(); // natively: CryptoKey -> its handle
   function CryptoKey() { throw new TypeError("Illegal constructor"); }
   function fromDoor(e) {
@@ -294,6 +297,7 @@
       usages: { value: Object.freeze(usages.slice()), enumerable: true },
     });
     nativeKeys.set(key, handle);
+    ownNativeKey(handle, key);
     return Object.freeze(key);
   }
   function nativePair(json, extractable, usages) {
@@ -697,10 +701,9 @@
   // `authCallback()` is this carrier's callback, known before PAR: a native
   // build's granted `auth.callback`, the web's `<origin>/.exact/auth/callback`
   // (D2); a device fact, so bake compiles no answer that asks.
-  // `openAuthSession(url, {callback, state, ephemeral})` is a request to
-  // `exact-auth:` on the independent lane, as `native.later` is (D1): it
-  // resolves with the callback URL (200) or rejects with the status and
-  // message (499 cancelled, 403, 409, 428, 501, 502) as `error.status`.
+  // `openAuthSession(url, {callback, state, ephemeral, message})` is a request to `exact-auth:` on the independent
+  // lane, as `native.later` is (D1): it resolves with the callback URL (200) or rejects with the status and message
+  // (499 cancelled, 403, 409, 428, 501, 502) as `error.status`; `message` is a loopback page's sentence (LLP 1133.005 D9).
   global.authCallback = function authCallback() {
     answerOnly("authCallback()");
     var callback = host(12, "callback", "");
@@ -712,10 +715,10 @@
     if (host(12, "placement", "") === "worker") {
       return Promise.reject(new Error("openAuthSession() is unavailable in a worker-placed source on the web: its popup opens in the press's call stack (LLP 1069.006); place this source on main"));
     }
-    if (typeof o.callback !== "string" || typeof o.state !== "string" || !o.state) {
-      return Promise.reject(new TypeError("openAuthSession(url, {callback, state}): callback is authCallback() and state a non-empty string"));
+    if (typeof o.callback !== "string" || typeof o.state !== "string" || !o.state || (o.message !== undefined && typeof o.message !== "string")) {
+      return Promise.reject(new TypeError("openAuthSession(url, {callback, state, message}): callback is authCallback(), state a non-empty string and message, if given, a string"));
     }
-    var body = JSON.stringify({ url: String(url), callback: o.callback, state: o.state, ephemeral: !!o.ephemeral });
+    var body = JSON.stringify({ url: String(url), callback: o.callback, state: o.state, ephemeral: !!o.ephemeral, message: o.message });
     return global.fetch("exact-auth:", { method: "POST", body: body, exactIndependentHttp: { maxResponseBytes: 65536 } })
       .then(function (r) {
         return r.text().then(function (t) {
@@ -731,10 +734,35 @@
   var presence = binary.presence(host, function (name) { return store.get(name); }, function (api) { if (overlaying) throw inOverlay(api); });
   var store = {
     get: function (name) { if (overlaying) throw inOverlay("store.get()"); var v = presence.door(2, String(name), ""); return v === undefined ? null : v; },
-    set: function (name, value) { if (overlaying) throw inOverlay("store.set()"); var e = presence.door(3, String(name), String(value)); if (e !== undefined) throw new Error(e); },
-    forget: function (name) { if (overlaying) throw inOverlay("store.forget()"); var e = host(4, String(name), ""); if (e !== undefined) throw new Error(e); },
+    set: function (name, value) { if (overlaying) throw inOverlay("store.set()"); var e = secretWrite(name, String(value)) ? undefined : presence.door(3, String(name), String(value)); if (e !== undefined) throw new Error(e); },
+    forget: function (name) { if (overlaying) throw inOverlay("store.forget()"); var e = secretWrite(name, null) ? undefined : host(4, String(name), ""); if (e !== undefined) throw new Error(e); },
     has: presence.has, locked: presence.locked, unlock: presence.unlock, protect: presence.protect, unprotect: presence.unprotect,
     keepKey: function (name, pair) { return keepKey(name, pair); }, key: function (name) { return keptKey(name); },
+  };
+
+  function secretWrite(name, value) {
+    var task = currentCall && currentCall.secrets && currentCall.secrets[0];
+    if (browserSecrets || !task || !task.held || task.name !== String(name)) return false;
+    host(26, String(currentCall.id), JSON.stringify({ name: String(name), value: value })); return true;
+  }
+  store.exclusive = function (name, work) {
+    if (overlaying) return Promise.reject(inOverlay("store.exclusive()"));
+    var call = currentCall;
+    if (!call || call.replied || call.letGo) return Promise.reject(new Error("store.exclusive() called outside an answer"));
+    if (!browserSecrets && call.secrets && call.secrets.length) return Promise.reject(new Error("nested secret leases are unsupported"));
+    return new Promise(function (resolve, reject) {
+      if (!browserSecrets) host(24, String(call.id), String(name));
+      (call.secrets || (call.secrets = [])).push({ name: String(name), work: work, resolve: resolve, reject: reject });
+    });
+  };
+  global.__exact_secret_ready = function (id, error) {
+    var call = calls.get(Number(id)), task = call && call.secrets && call.secrets[0];
+    if (!task || call.letGo) throw new Error("the secret's answer was let go");
+    currentCall = call; task.held = true;
+    var finish = function (ok, value) { if (!browserSecrets) { try { host(25, String(call.id), ok ? "commit" : ""); } catch (e) { ok = false; value = e; } } call.secrets.shift(); (ok ? task.resolve : task.reject)(value); };
+    if (error) { finish(false, new Error(error)); return; }
+    try { Promise.resolve(task.work()).then(function (v) { finish(true, v); }, function (e) { finish(false, e); }); }
+    catch (e) { finish(false, e); }
   };
 
   // Storage is a capability argument, never an ambient global. Native hosts
@@ -1050,9 +1078,11 @@
     var p = pending.get(ticket);
     p.claimed = true;
     if (p.call !== call) { p.call = call; call.tickets.push(ticket); }
-    // An answer waits on one thing at a time here: its timer runs after the fetch lands (the web races them).
-    if (!p.timed && !call.toldRace && timers.armed(call)) { call.toldRace = true; journal("data: an answer awaits a fetch while a timer of its own is armed: the timer runs only after the fetch lands, so it cannot cut the fetch short as it can on the web; give the fetch AbortSignal.timeout or exactTimeout"); }
-    return JSON.stringify({ tag: 1, call: call.id, ticket: ticket });
+    // Its own timer, if due first, resumes it while the fetch runs on as module work (`__exact_adopt`), as a browser
+    // races them. A worker's answer, or one in the web's module realm, waits on one thing at a time: the timer runs after.
+    var due = moduleWide && moving && !p.stream ? timers.race(call, p.signal) : undefined;
+    if (due === undefined && !p.timed && !call.toldRace && timers.armed(call)) { call.toldRace = true; journal("data: an answer awaits a fetch while a timer of its own is armed: the timer runs only after the fetch lands, so it cannot cut the fetch short as it can on the web; give the fetch AbortSignal.timeout or exactTimeout"); }
+    return JSON.stringify({ tag: 1, call: call.id, ticket: ticket, timer: due });
   }
   // An answer is given when its value is ready, as in a browser (LLP 1097
   // D1): the storage it started and did not await finishes after it, as the
@@ -1066,6 +1096,8 @@
     return text;
   }
   function settle(call, final) {
+    var secret = call.secrets && call.secrets[0];
+    if (secret && !secret.held) return JSON.stringify({ tag: 1, call: call.id, ticket: 0, secret: secret.name });
     // A fetch its continuation tried after it staged socket operations
     // (refused at the fetch) refuses the mutation too, before any frame.
     if (call.socketConflict && call.status === "done") {
@@ -1107,7 +1139,7 @@
       // A fetch of its own already handed out and still in flight: asked
       // again once it lands (natively; the module realm runs one at a time).
       var inFlight = false;
-      pending.forEach(function (p) { if (p.call === call && p.claimed) inFlight = true; });
+      pending.forEach(function (p) { if (p.call === call && p.claimed && !p.module) inFlight = true; }); // (one its timer outran runs on alone)
       if (moduleWide && inFlight) return JSON.stringify({ tag: 1, call: call.id, ticket: 0, waiting: true });
       if (call.status === "done") handSocketOps(call);
       return reply(call, call.status === "done" ? ok(call.value, call.epoch !== gcEpoch()) : fail(call.error));
@@ -1277,6 +1309,7 @@
   global.__exact_forget = function (id) {
     var call = calls.get(Number(id));
     if (!call) return ""; call.letGo = true; // a fetch, yield or timer it makes from here is refused
+    var secretRejected = 0; (call.secrets || []).forEach(function (task) { if (!task.held) { secretRejected++; task.reject(new DOMException("the answer was let go", "AbortError")); } });
     var moved = work.forgot(call); // its steps waiting for its own turn run in the let-go chain, with no store (LLP 1146 D2)
     // A released resource's socket handle is stale from now on (D7).
     if (call.socket) { call.socket.state = 3; if (call.socket.close) call.socket.close(); }
@@ -1291,7 +1324,7 @@
     dropped.forEach(function (p) {
       p.reject(new FetchError({ kind: "Aborted", message: "the answer was let go before this reply; the request may already have been sent" }));
     });
-    var rejected = dropped.length + endYields(call, new DOMException("the answer was let go", "AbortError")) + moved ? " rejected" : "";
+    var rejected = secretRejected + dropped.length + endYields(call, new DOMException("the answer was let go", "AbortError")) + moved ? " rejected" : "";
     timers.drop(call);
     if (call.storage > 0 && !call.lost) return "storage" + rejected;
     call.replied = true;

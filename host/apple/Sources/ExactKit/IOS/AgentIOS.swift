@@ -14,9 +14,10 @@
 import UIKit
 
 extension Agent {
-    /// Listen on the socket; when the driver connects, `ready` goes out and
-    /// requests are answered until it hangs up (which ends the process).
-    /// `sessions` are what a request's `session` label routes among.
+    /// Listen on the simulator socket, wait for foreground eligibility
+    /// (`awaitFront`), then announce `ready` and serve requests until the driver
+    /// hangs up. On a device, connect to the driver while the app is active.
+    /// Route requests to `sessions` by their `session` label.
     public static func startSocket(ready: [String: Any], sessions: [(String, ExactSession)]) {
         routes = sessions
         _ = KeyboardMotion.shared // a press waits out the keyboard's motion (`settleForPress`)
@@ -91,6 +92,7 @@ extension Agent {
             let client = accept(fd, nil, nil)
             guard client >= 0 else { FileHandle.standardError.write(Data("exact: accept: \(String(cString: strerror(errno)))\n".utf8)); return }
             out = FileHandle(fileDescriptor: client, closeOnDealloc: false)
+            awaitFront { sessions.first?.1.presenter.viewport.window }
             reply(ready)
             DispatchQueue.main.async { watchForeground() }
             serve(fd: client)
@@ -1157,9 +1159,11 @@ extension Agent {
                     _ = field.returnHeard(prompt)
                 } else if let f = focus.selectionField {
                     (f as? TextField)?.heard = name
-                    if name == "Backspace" { f.deleteBackward() } else if name == "Enter" { _ = f.delegate?.textFieldShouldReturn?(f) }
+                    (f.delegate as? PromptField)?.heard = name
+                    if name == "Backspace" { if let prompt = f.delegate as? PromptField { prompt.deleteBackward(f) } else { f.deleteBackward() } } else if name == "Enter" { _ = f.delegate?.textFieldShouldReturn?(f) }
                     else if Agent.caretKey(name, in: f) {} else if types { f.insertText(name) }
                     (f as? TextField)?.heard = nil
+                    (f.delegate as? PromptField)?.heard = nil
                 } else if presenter.controls.radioKey(focus, name, held: held) { // x2apps survey #2
                 } else {
                     #if os(iOS)
@@ -1345,15 +1349,7 @@ extension Agent {
         return r
     }
 
-    /// Whether the display shows this app's window, or why not: an app that
-    /// is not active is behind a system alert, another app or the home
-    /// screen, and a window that is not key is behind another of its scene's.
-    func displayFront() -> Any {
-        if UIApplication.shared.applicationState != .active { return "the app is not active" }
-        if presenter.viewport.window?.windowScene?.activationState != .foregroundActive { return "the app's scene is not in front" }
-        if presenter.viewport.window?.isKeyWindow != true { return "the app's window is not key" }
-        return true
-    }
+    func displayFront() -> Any { Agent.frontRefusal(presenter.viewport.window) ?? true }
 
     /// Points of `window`, in its points, where the display must show what
     /// `drawHierarchy` drew, for the simulator driver's check that nothing of
@@ -1381,20 +1377,35 @@ extension Agent {
         var skipped: [CGRect] = []
         // A blur whose radius is unset or 0 (a navigation bar's between
         // transitions) changes nothing: there the display matched the app's
-        // drawing exactly (euxy's Patterns bar, light and dark).
+        // drawing exactly (euxy's Patterns bar, light and dark). The radius,
+        // and whether a backdrop only captures, are Core Animation's private
+        // keys, which only a development build reads (LLP 1035.003 §3); a
+        // production one counts every filter and backdrop, which leaves the
+        // display's pixels in more of the picture, never fewer.
         func changes(_ layer: CALayer, _ path: String) -> Bool {
             ((layer.value(forKey: path) as? [Any]) ?? []).contains { filter in
+                #if EXACT_INSPECT
                 let name = String(describing: filter)
                 guard name.contains("Blur") else { return true }
                 return ((layer.value(forKeyPath: "\(path).\(name).inputRadius") as? NSNumber)?.doubleValue ?? 0) != 0
+                #else
+                return true
+                #endif
             }
+        }
+        func onlyCaptures(_ layer: CALayer) -> Bool {
+            #if EXACT_INSPECT
+            return (layer.value(forKey: "captureOnly") as? Bool) == true
+            #else
+            return false
+            #endif
         }
         func visit(_ layer: CALayer) {
             guard !layer.isHidden, layer.opacity > 0 else { return }
             let kind = String(describing: Swift.type(of: layer))
             // A backdrop that only captures (a scroll edge effect's source) draws nothing.
             let backdrop = ["Backdrop", "Portal", "SDF", "Glass"].contains(where: kind.contains)
-                && !(kind.contains("Backdrop") && (layer.value(forKey: "captureOnly") as? Bool) == true)
+                && !(kind.contains("Backdrop") && onlyCaptures(layer))
             if backdrop || changes(layer, "filters") || changes(layer, "backgroundFilters") {
                 skipped.append(layer.convert(layer.bounds, to: window.layer).insetBy(dx: -12, dy: -12))
                 return

@@ -30,9 +30,9 @@ use trapped::Evaluated;
 
 use crate::bridge;
 use crate::vm::{self, Env, Frame, RowSlots, Trap};
-pub use deps::RowWrites;
 use deps::{Bits, Reads, Seen};
-pub(crate) use deps::{Deps, Input, Reads as DepReads};
+pub(crate) use deps::{Deps, Reads as DepReads};
+pub use deps::{Input, RowDependencies, RowWrites};
 pub use document::{DocNode, DocTree, DocTreeError};
 use exact_kernel::{Kernel, NodeType, Op, StyleProps, ViewId};
 use exact_plan::{ArmsId, BindingKind, Items, NodesId, Plan, RegionKind, RegionsId, Value};
@@ -418,6 +418,10 @@ pub struct Update<'a> {
     /// Journal lines for what the data got wrong and the tree absorbed: an
     /// invalid style or prop value, a repeated key. Written with the commit.
     pub notes: Vec<String>,
+    /// A nested `scrollIntoView`'s inner part a report refused (LLP 1070.000
+    /// §2.6), by the inner list's `id` and why: journaled and kept for
+    /// `state` as the command's refusals are.
+    pub refused: Vec<(String, String)>,
     /// No kernel mirrors the tree (a detached kernel's runner, LLP
     /// 1048.004): bindings are evaluated and kept, and no style or prop op
     /// is built. The document is written from the tree ([`Tree::document`]).
@@ -473,6 +477,7 @@ impl<'a> Update<'a> {
             on_path: true,
             in_written: false,
             notes: Vec::new(),
+            refused: Vec::new(),
             discard: false,
             text_styled: false,
             renewed: Vec::new(),
@@ -681,6 +686,11 @@ impl SiteIndex {
     /// What every binding, site, derive and resource argument reads.
     pub(crate) fn deps(&self) -> &Deps {
         &self.deps
+    }
+
+    /// What a region's row body reads outside its own item and position.
+    pub fn row_dependencies(&self, region: RegionsId) -> RowDependencies {
+        self.deps.row_dependencies(region.0 as usize)
     }
 
     fn children(&self, parent: Option<NodesId>, arm: Option<ArmsId>) -> &[(u32, Site)] {

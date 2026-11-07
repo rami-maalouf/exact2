@@ -6,15 +6,15 @@ let managed = new WeakMap(), shown = new WeakMap(), placed = new WeakMap();
 let written = [], gone = new Set(), cursor = 0, first = null, originIndex = null, echo = null, pop = null, draining = false;
 const queue = [], waiters = new Set();
 let root, navigate, log, hostBack, hostGo, routeMatches = () => false;
-const routesIn = node => [...node.children].filter(r => r.hasAttribute("navigationKey") && !r.hasAttribute("data-exiting")); const setInert = (el, on) => { if (el.inert !== on) el.inert = on; }; export const liveById = (id, root = document) => { const el = document.getElementById(id), live = n => !n.closest("[data-exiting]"); return !el ? null : live(el) && root.contains(el) ? el : [...root.querySelectorAll("[id]")].find(n => n.id === id && live(n)) ?? null; }; // a command by id means the live element: one leaving keeps its ids for its own references
-const leavingSheets = new Set(), shownRoutes = new WeakMap(); export function sheetLeaves(el) { if (typeof matchMedia !== "function" || typeof HTMLTextAreaElement !== "function" || el.nodeType !== 1 || el.getAttribute("navigationPresentation") !== "modal" || el.hasAttribute("data-exiting") || !el.isConnected || el.querySelector("audio, video, dialog[open], :popover-open") || ("createValueRange" in HTMLTextAreaElement.prototype && el.querySelector("textarea[data-decorations]")) || getComputedStyle(el).position !== "fixed" || matchMedia("(prefers-reduced-motion: reduce)").matches) return false; if (el.contains(document.activeElement)) document.activeElement.blur(); el.setAttribute("navigationKey", ""); el.setAttribute("data-exiting", ""); el.setAttribute("aria-hidden", "true"); el.inert = true; const now = getComputedStyle(el), from = now.translate === "none" ? "0 0" : now.translate, shadow = now.boxShadow; Object.assign(el.style, { transition: "none", pointerEvents: "none" }); const slide = el.animate([{ translate: from, boxShadow: shadow }, { translate: "0 100vh", boxShadow: shadow.replace(/rgba?\([^)]*\)|color\([^)]*\)|#[\da-f]+\b/gi, "transparent") }], { duration: 400, easing: "cubic-bezier(.32, .72, 0, 1)" }), done = () => { leavingSheets.delete(slide); el.remove(); }; leavingSheets.add(slide); slide.finished.then(done, done); return true; } // @ref LLP 1115.000 D4.8 — a sheet the look draws (fixed to the window) slides back down as it closes, as it slid up (neutral.css), unless the person asks for less motion. A runtime asks this before it removes a modal route (glue.js's `destroy`; rt.js's `clear`, `each` and presence's `Leave`); a sheet that leaves stays whole until it is off the window, from where it stands, out of input, accessibility and the routes as presence-glue.js's leaving views are (LLP 1063), the focus leaving it as a removed one's would (input-glue.js's `arrive` takes one a blur does not reach). One holding media or a field whose decorations the browser paints closes at once, as its runtime empties those with the commit, and so does one holding an open dialog or popover, which the top layer would leave frozen on the window; a native view slides, showing what its module left in it. It keeps its ids for what it draws, though a command by id passes over it (`liveById`), and its stack's projection ends it on showing a sheet that was not beneath it, which may share them (compared as elements: a replace keeps its key).
+const routesIn = node => viewChildren(node).filter(r => r.hasAttribute("navigationKey") && !r.hasAttribute("data-exiting")); const setInert = (el, on) => { if (el.inert !== on) el.inert = on; }; export const liveById = (id, root = document) => { const el = document.getElementById(id), live = n => !n.closest("[data-exiting]"); return !el ? null : live(el) && root.contains(el) ? el : [...root.querySelectorAll("[id]")].find(n => n.id === id && live(n)) ?? null; }; // a command by id means the live element: one leaving keeps its ids for its own references
+const leavingSheets = new Set(), shownRoutes = new WeakMap(); export function sheetLeaves(el) { if (typeof matchMedia !== "function" || typeof HTMLTextAreaElement !== "function" || el.nodeType !== 1 || el.getAttribute("navigationPresentation") !== "modal" || el.hasAttribute("data-exiting") || !el.isConnected || el.querySelector("audio, video, dialog[open], :popover-open") || ("createValueRange" in HTMLTextAreaElement.prototype && el.querySelector("textarea[data-decorations]")) || getComputedStyle(el).position !== "fixed" || matchMedia("(prefers-reduced-motion: reduce)").matches) return false; if (el.parentElement?.hasAttribute("data-exact-list-item")) unwrapListItem(el.parentElement); if (el.contains(document.activeElement)) document.activeElement.blur(); el.setAttribute("navigationKey", ""); el.setAttribute("data-exiting", ""); el.setAttribute("aria-hidden", "true"); el.inert = true; const now = getComputedStyle(el), from = now.translate === "none" ? "0 0" : now.translate, shadow = now.boxShadow; Object.assign(el.style, { transition: "none", pointerEvents: "none" }); const slide = el.animate([{ translate: from, boxShadow: shadow }, { translate: "0 100vh", boxShadow: shadow.replace(/rgba?\([^)]*\)|color\([^)]*\)|#[\da-f]+\b/gi, "transparent") }], { duration: 400, easing: "cubic-bezier(.32, .72, 0, 1)" }), done = () => { leavingSheets.delete(slide); el.remove(); }; leavingSheets.add(slide); slide.finished.then(done, done); return true; } // @ref LLP 1115.000 D4.8 — a sheet the look draws (fixed to the window) slides back down as it closes, as it slid up (neutral.css), unless the person asks for less motion. A runtime asks this before it removes a modal route (glue.js's `destroy`; rt.js's `clear`, `each` and presence's `Leave`); a sheet that leaves stays whole until it is off the window, from where it stands, out of input, accessibility and the routes as presence-glue.js's leaving views are (LLP 1063), the focus leaving it as a removed one's would (input-glue.js's `arrive` takes one a blur does not reach). One holding media or a field whose decorations the browser paints closes at once, as its runtime empties those with the commit, and so does one holding an open dialog or popover, which the top layer would leave frozen on the window; a native view slides, showing what its module left in it. It keeps its ids for what it draws, though a command by id passes over it (`liveById`), and its stack's projection ends it on showing a sheet that was not beneath it, which may share them (compared as elements: a replace keeps its key).
 // @ref LLP 1075.003 §3.7 — tabs name their kept panels with aria-controls; each panel holds a route stack.
 // Attribute and parent walks also work in the server renderer's DOM, which has no selector engine.
 const tabsOf = nav => {
   const all = [...(nav?.getElementsByTagName("*") ?? [])];
   const owns = el => { for (let p = el.parentElement; p; p = p.parentElement) if (p.hasAttribute("navigationKey")) return p === nav; return false; };
   for (const list of all.filter(el => el.getAttribute("role") === "tablist" && owns(el))) {
-    const panels = [...list.children].filter(tab => tab.getAttribute("role") === "tab" && tab.hasAttribute("aria-controls"))
+    const panels = viewChildren(list).filter(tab => tab.getAttribute("role") === "tab" && tab.hasAttribute("aria-controls"))
       .map(tab => all.find(panel => panel.getAttribute("id") === tab.getAttribute("aria-controls")))
       .filter(panel => panel?.getAttribute("role") === "tabpanel" && owns(panel));
     if (panels.length) return [list, panels];
@@ -23,9 +23,8 @@ const tabsOf = nav => {
 };
 export const panelsOf = nav => tabsOf(nav)[1];
 const stacksOf = nav => { const panels = panelsOf(nav); return panels.length ? panels.map(routesIn) : [nav ? routesIn(nav) : []]; };
-// @ref LLP 1115.002 D4, LLP 1116.004 D1.2 — the shared list/outer-press rule;
-// WIDE is the web's presentation threshold, not a different navigation rule.
-const WIDE = "(min-width: 900px)", wide = () => !!globalThis.matchMedia?.(WIDE).matches;
+// @ref LLP 1115.002 D4, LLP 1116.004 D1.2 — WIDE changes presentation; the list/outer-press rule stays shared.
+const WIDE_WIDTH = 900, WIDE = `(min-width: ${WIDE_WIDTH}px)`, wide = () => { if (!globalThis.matchMedia?.(WIDE).matches) { return false; } const { cols, rects } = fold(); return cols === 1 || (rects.length > 0 && rects.every(([, , width]) => width >= WIDE_WIDTH)); }; // Base wide navigation on the space within each horizontal segment
 let splitLists = new WeakMap(), rowOf = new WeakMap(), actionRows = new WeakMap(), visits = new Map();
 const activationRequired = new WeakSet(), activated = new WeakSet();
 const sheet = route => ["modal", "fullscreen"].includes(route?.getAttribute("navigationPresentation"));
@@ -34,6 +33,13 @@ const excluded = el => el.hasAttribute("popover") || el.hasAttribute("data-exiti
 const rowPress = el => el.getAttribute("data-exact-router-press");
 const rowHref = el => el.getAttribute("href") || null;
 const linked = href => href?.startsWith("/") && !href.startsWith("//") && routeMatches(href);
+export const listRow = el => [...el.children].find(c => !c.hasAttribute("data-exiting")); export function viewChildren(el) { return [...(el?.children ?? [])].flatMap(c => c.hasAttribute("data-exact-list-item") ? [listRow(c)].filter(Boolean) : [c]); } // Semantic list items keep the row's own element and contribute no layout box.
+export function viewParent(el) { const p = el?.parentElement; return p?.hasAttribute("data-exact-list-item") ? p.parentElement : p; }
+export const listOwner = p => p?.$listOwner ?? (p?.hasAttribute?.("data-exact-list") ? p : null);
+const concreteRole = /^(?:alert|alertdialog|application|article|banner|blockquote|button|caption|cell|checkbox|code|columnheader|combobox|comment|complementary|contentinfo|definition|deletion|dialog|directory|doc-abstract|doc-acknowledgments|doc-afterword|doc-appendix|doc-backlink|doc-biblioentry|doc-bibliography|doc-biblioref|doc-chapter|doc-colophon|doc-conclusion|doc-cover|doc-credit|doc-credits|doc-dedication|doc-endnote|doc-endnotes|doc-epigraph|doc-epilogue|doc-errata|doc-example|doc-footnote|doc-foreword|doc-glossary|doc-glossref|doc-index|doc-introduction|doc-noteref|doc-notice|doc-pagebreak|doc-pagefooter|doc-pageheader|doc-pagelist|doc-part|doc-preface|doc-prologue|doc-pullquote|doc-qna|doc-subtitle|doc-tip|doc-toc|document|emphasis|feed|figure|form|generic|graphics-document|graphics-object|graphics-symbol|grid|gridcell|group|heading|image|img|insertion|link|list|listbox|listitem|log|main|mark|marquee|math|menu|menubar|menuitem|menuitemcheckbox|menuitemradio|meter|navigation|none|note|option|paragraph|presentation|progressbar|radio|radiogroup|region|row|rowgroup|rowheader|scrollbar|search|searchbox|sectionfooter|sectionheader|separator|slider|spinbutton|status|strong|subscript|suggestion|superscript|switch|tab|table|tablist|tabpanel|term|textbox|time|timer|toolbar|tooltip|tree|treegrid|treeitem)$/i, listRole = el => { const r = el.getAttribute('role'); return r === 'list' || r === 'listitem' || r === 'directory' ? r : r?.split(/[\t\n\f\r ]+/).find(r => concreteRole.test(r))?.toLowerCase(); }; // Concrete ARIA, DPUB and Graphics roles; document.rs `role_is` has the same vocabulary.
+export function listItem(el, owner) { const p = el.parentElement; owner ??= listOwner(p?.hasAttribute("data-exact-list-item") ? p.parentNode : p); const marker = el.localName === "dialog" || el.hasAttribute("popover") ? "layer" : "", ownerRole = owner && listRole(owner), role = (!owner || ownerRole === "list" || ownerRole === "directory") && listRole(el) !== "listitem" ? "listitem" : "presentation"; if (p?.hasAttribute("data-exact-list-item")) { if (p.getAttribute("data-exact-list-item") !== marker) p.setAttribute("data-exact-list-item", marker); if (p.getAttribute("role") !== role) p.setAttribute("role", role); return p; } const w = document.createElement("div"); w.setAttribute("role", role); w.setAttribute("data-exact-list-item", marker); w.style.setProperty("display", "contents"); w.append(el); return w; } // The marker keeps top-layer rows out of the modal card’s body count.
+export function syncListItemRoles(el) { if (el.parentElement?.hasAttribute("data-exact-list-item")) listItem(el); if (el.hasAttribute("data-exact-list")) for (const w of el.children) if (w.hasAttribute("data-exact-list-item")) listItem(listRow(w), el); }
+export function unwrapListItem(el) { if (!el?.hasAttribute?.("data-exact-list-item")) return el; const child = listRow(el); el.before(...el.childNodes); el.remove(); return child; }
 /** Outermost press owners; unlike candidate discovery, this walk crosses a navigationKey. */
 function listRows(list) {
   const rows = [], walk = parent => {
@@ -110,7 +116,7 @@ function detailRows(routes, found) {
 // @ref LLP 1116.005 D3 — a route `replace` gives another path (a split's detail, another row's) keeps its id, so its node: it opens at its top, as a pushed one does; a new query keeps its place.
 const paths = new WeakMap(), freshPath = route => { const path = last?.url?.split(/[?#]/)[0], was = paths.get(route); paths.set(route, path); if (was !== undefined && was !== path) { for (const el of [route, ...route.querySelectorAll("*")]) if (el.scrollTop || el.scrollLeft) el.scrollTo(0, 0); if (route.matches('[data-scrolldocument="true"]:not([data-exact-offpage])') || route.querySelector('[data-scrolldocument="true"]:not([data-exact-offpage])')) scrollTo(0, 0); } };
 /** Whether a root's tablist is a bar whose placement the app left unsaid, read while the root is not yet a sidebar. */
-const unsaidBar = (nav, list) => list?.parentElement === nav && getComputedStyle(list).appearance !== "none" && list.getAttribute("aria-orientation") !== "vertical"
+const unsaidBar = (nav, list) => viewParent(list) === nav && getComputedStyle(list).appearance !== "none" && list.getAttribute("aria-orientation") !== "vertical"
   && (([n, l]) => /flex/.test(n.display) && n.flexDirection.startsWith("column") && /^(static|relative)$/.test(l.position) && l.flexDirection.startsWith("row"))([getComputedStyle(nav), getComputedStyle(list)]);
 /** Routes and panels excluded from input or document fields. Only input keeps a visible split list live. */
 function unselectedWithin(nav, keepList) {
@@ -140,20 +146,17 @@ const byPerson = (e, el = e.target) => e.type === "keydown" ? /^(Arrow(Up|Down|L
 const stamp = (index, op) => ({ exact: index, id: op.top, url: op.url });
 /** A route's Back control, the selected route's unless named (1035.001 D1: the `id` the root's `navigationBack` names), pressable or not: the route's own, else one in no route at all (a header the routes share), as iOS resolves it (NavigationBack.control); another route's is that route's. */
 const backControl = (nav, route = selectedRoute(nav), name = nav.getAttribute("navigationBack")) => route && name !== null ? route.querySelector(`[id="${CSS.escape(name)}"]`) ?? [...nav.ownerDocument.querySelectorAll(`[id="${CSS.escape(name)}"]`)].find(control => [null, nav].includes(control.closest("[navigationKey]"))) ?? null : undefined;
-// @ref LLP 1116.000 D4, LLP 1115.000 D4.14 — a pushed route's bar draws a web Back (an arrow and "Back", or the control's
-// words) where iOS draws UIKit's (NavigationBarIOS.swift `projectBack`), with no Back control too; not on a stack's root,
-// a sheet, a route with no bar, or for a disabled or inert control. An item of the bar iOS makes of its header is pressed
-// through it and not shown (index.html). The button is the header's shadow root's, before its slot.
+// LLP 1116.000 D4: Back belongs to the header shadow root; bar items proxy the authored controls.
 const BACK = `<style>button{all:unset;display:inline-flex;align-items:center;gap:6px;flex:none;vertical-align:middle;margin-inline:-6px 6px;padding:4px 8px 4px 4px;border-radius:8px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}button[hidden],span[hidden]{display:none}button:focus-visible{outline:2px solid var(--exact-accent,AccentColor);outline-offset:1px}button:active>*{opacity:var(--exact-back-press,.5)}svg{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}button:dir(rtl) svg{scale:-1 1}</style><button part="back" type="button"><svg viewBox="4 4 16 16" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6"/></svg><span></span></button><slot></slot>`;
-const headerOf = route => [...(route?.children ?? [])].find(child => child.localName === "header");
+const headerOf = route => viewChildren(route).find(child => child.localName === "header");
 const authored = '[data-exact-said~="appearance"]'; // a header or a node in one whose author wrote `appearance: none` (element.rs)
 // @ref LLP 1153 D8 — a route's header holding a `nav` anywhere (a popover's too), or more than one link outside a `popover` or `dialog` in it (a menu's links are its button's, as an app bar's are), is a site's, marked `data-exact-site`: drawn as written (index.html, neutral.css), as one whose author wrote `appearance: none` is, it is no app bar and holds no Back. document_bars.rs `site_header` is the Rust renderer's rule.
-const siteHeader = (header, links = 0) => { const holds = (el, menu) => [...el.children].some(child => { const inMenu = menu || child.matches("[popover], dialog"); return child.localName === "nav" || (!inMenu && child.matches("a[href], [role=link]") && ++links > 1) || holds(child, inMenu); }); return holds(header, false); }, markSites = route => { for (const child of route.children) if (child.localName === "header") child.toggleAttribute("data-exact-site", siteHeader(child)); }, asWritten = header => header.matches(`${authored}, [data-exact-site]`);
+const siteHeader = (header, links = 0) => { const holds = (el, menu) => [...el.children].some(child => { const inMenu = menu || child.matches("[popover], dialog"); return child.localName === "nav" || (!inMenu && child.matches("a[href], [role=link]") && ++links > 1) || holds(child, inMenu); }); return holds(header, false); }, markSites = route => { for (const child of viewChildren(route)) if (child.localName === "header") child.toggleAttribute("data-exact-site", siteHeader(child)); }, asWritten = header => header.matches(`${authored}, [data-exact-site]`);
 // The items of the bar iOS makes of a shown `header`, or null where it makes none: kernel/src/bars.rs `header_bar`,
 // ported to the elements both runtimes write alike, since the JS target keeps no kernel to ask. `walk` is `Walk::walk`:
 // a bar's header holds one heading, and an item is a pressable it reaches, not the title's, or a disabled button. A header drawn as written is no bar.
 function barItems(route, header) {
-  if (route.getAttribute("data-navigationbar") === "none" || route.firstElementChild !== header || asWritten(header)) return null;
+  if (route.getAttribute("data-navigationbar") === "none" || viewChildren(route)[0] !== header || asWritten(header)) return null;
   const heading = "[data-exact-text][role=heading]", press = '[data-exact-on~="press"]', layer = el => el.matches("[popover], dialog");
   const holds = el => [...el.children].some(child => !layer(child) && (child.matches(heading) || holds(child)));
   const disabled = el => el.matches("button[disabled]") && !el.hasAttribute("role") && root?.getAttribute("aria-busy") !== "true"; // `fact::DISABLED`, dimmed whether or not it presses; a `button` element carries no `role` unless it has another one (element.rs); until input is ready, the glue disables every control itself (glue.js)
@@ -178,9 +181,7 @@ function opensPopover(el) {
   if (commanded) return commanded.hasAttribute("popover") && /^(show|toggle)-popover$/i.test(el.getAttribute("command") ?? "");
   return !!document.getElementById(el.getAttribute("popovertarget") || "")?.hasAttribute("popover") && !/^hide$/i.test(el.getAttribute("popovertargetaction") ?? "");
 }
-// @ref LLP 1115.000 D4.1 — a route is a page, so the title follows it: `document.title` is the authored `head`'s title
-// (`said`: each target's head writer passes it, null for none), else the selected route's header's heading (what iOS
-// puts in the bar), else the app's name. Read again after every projection.
+// LLP 1115.000 D4.1: title precedence is authored head, visible route heading, then app name.
 const titleOf = route => headerOf(route)?.querySelector("h1, h2, h3, h4, h5, h6, [role=heading]")?.textContent.trim() ?? "";
 let saidTitle = null, appName = null;
 export function pageTitle(said = saidTitle) {
@@ -207,7 +208,7 @@ function appBarBack(nav, routes, index, split, shown) {
   if (drawn && !button && !header.shadowRoot && header.attachShadow) { // not a shadow root of someone else's
     header.attachShadow({ mode: "open" }).innerHTML = BACK;
     button = header.shadowRoot.querySelector("button");
-    button.addEventListener("click", event => { event.stopPropagation(); appBack(header.parentElement); });
+    button.addEventListener("click", event => { event.stopPropagation(); appBack(viewParent(header)); });
   }
   for (const el of [...route.querySelectorAll("[data-exact-bar-back]"), control]) el?.toggleAttribute("data-exact-bar-back", el === control && held && !!button);
   // A control the author disabled, or made inert in its route, leaves no Back, as `pressBack` refuses it. The glue's own
@@ -326,6 +327,9 @@ function drain() {
 }
 const settled = () => { if (echo === null && !queue.length) for (const finish of [...waiters]) finish(); };
 export const navigation = { personScrolls: 0, // the person's scrolls (`byPerson`) from the page's start: one after a navigation asked a fragment's scroll cancels it (fragment.js, LLP 1153 D5)
+  /** A Back or Forward being dispatched (`popped`): its commit must land before `popped` judges it, so a tree update that
+   * would wait for a view transition (shared.js) runs at once instead; its flight is forgone. */
+  get traversing() { return pop !== null; },
   /** `dispatch(location)` is false when no `navigate` handler heard it; `back(id)` is the runner's own `back` from visit `id`, `goTo(location)` its own `go`. */
   connect(hostRoot, dispatch, journal, back = null, goTo = null, matchesRoute = () => false, waitForActivation = false) {
     root = hostRoot; navigate = dispatch; log = journal; hostBack = back; hostGo = goTo; routeMatches = matchesRoute; for (const type of ["wheel", "touchmove", "keydown", "pointerdown"]) addEventListener(type, e => { if (byPerson(e)) navigation.personScrolls++; }, { capture: true, passive: true });
@@ -335,7 +339,7 @@ export const navigation = { personScrolls: 0, // the person's scrolls (`byPerson
     document.addEventListener("click", captureRow, true);
     document.addEventListener("dragstart", event => { if (root.contains(event.target) && event.target.matches?.('img[data-symbol-source], :is(button, a[href], [data-exact-on~="press"]) img')) event.preventDefault(); }); // @ref LLP 1115.000 D4.14 — symbols and images inside pressables do not start picture drags.
     globalThis.matchMedia?.(WIDE).addEventListener?.("change", () => navigation.project(root, log));
-    addEventListener("resize", () => navigation.project(root, log)); // Bare plans have no exactViewport callback.
+    onFold(() => navigation.project(root, log));
     addEventListener("popstate", event => {
       if (!last) return;
       const index = browserIndex();
@@ -406,7 +410,7 @@ export const navigation = { personScrolls: 0, // the person's scrolls (`byPerson
     for (const nav of root.querySelectorAll("[navigationBack]")) {
       let key = nav.getAttribute("navigationKey"), [list, panels] = tabsOf(nav);
       // The authored placement is read with the sidebar's own rules lifted, which restyles the page (an embedded frame re-centres), so only when what places the bar may have changed: the wide breakpoint, the bar's parent or orientation, or the root's or the bar's class or inline display, flex direction, position or appearance (their class rules and inline style are what place them).
-      const isWide = wide(), said = [isWide, list?.parentElement === nav && list.getAttribute("aria-orientation"), ...[nav, list].map(el => el && [el.className, el.style.display, el.style.flexDirection, el.style.position, el.style.appearance].join("|"))].join("/"); if (placed.get(nav) !== said) { nav.removeAttribute("data-exact-sidebar"); nav.toggleAttribute("data-exact-sidebar", isWide && unsaidBar(nav, list)); placed.set(nav, said); }
+      const isWide = wide(), said = [isWide, viewParent(list) === nav && list.getAttribute("aria-orientation"), ...[nav, list].map(el => el && [el.className, el.style.display, el.style.flexDirection, el.style.position, el.style.appearance].join("|"))].join("/"); if (placed.get(nav) !== said) { nav.removeAttribute("data-exact-sidebar"); nav.toggleAttribute("data-exact-sidebar", isWide && unsaidBar(nav, list)); placed.set(nav, said); }
       for (const panel of managed.get(nav) ?? []) {
         if (!panels.includes(panel)) { panel.style.visibility = ""; setInert(panel, !!panel.authoredInert); }
       }
@@ -431,7 +435,7 @@ export const navigation = { personScrolls: 0, // the person's scrolls (`byPerson
       for (const [stack, routes] of stacks.entries()) {
         // The selected stack shows the route the root names; another keeps its top laid out.
         const selected = stack === at ? routes.findIndex(route => route.getAttribute("navigationKey") === key) : routes.length - 1;
-        if (stack === at) { const before = shownRoutes.get(nav) ?? [], showing = routes.slice(0, selected + 1); shownRoutes.set(nav, showing); shown.set(nav, showing.map(route => route.getAttribute("navigationKey"))); if (sheet(routes[selected]) && !before.includes(routes[selected])) for (const slide of leavingSheets) if (slide.effect.target.parentElement === routes[selected].parentElement) { slide.finish(); slide.effect.target.remove(); } }
+        if (stack === at) { const before = shownRoutes.get(nav) ?? [], showing = routes.slice(0, selected + 1); shownRoutes.set(nav, showing); shown.set(nav, showing.map(route => route.getAttribute("navigationKey"))); if (sheet(routes[selected]) && !before.includes(routes[selected])) for (const slide of leavingSheets) if (viewParent(slide.effect.target) === viewParent(routes[selected])) { slide.finish(); slide.effect.target.remove(); } }
         const found = splitOf(routes), split = found.width, live = split && !sheet(routes[selected]);
         const modal = routes[selected]?.getAttribute("navigationPresentation") === "modal", beneath = routes.findLastIndex((r, i) => i < selected && r.getAttribute("navigationPresentation") !== "modal");
         detailRows(routes, found);
@@ -454,7 +458,7 @@ export const navigation = { personScrolls: 0, // the person's scrolls (`byPerson
         for (const el of routes[0]?.querySelectorAll("[data-exact-split-row]") ?? []) if (el !== row) el.removeAttribute("data-exact-split-row");
         row?.toggleAttribute("data-exact-split-row", true);
         // @ref LLP 1116.006 D2 — a split showing no detail fills the detail pane, as an iPad's split view does: the platform's placeholder (the shell draws `data-exact-split-empty`), or the author's, a box of the root route marked `navigationSplit="placeholder"` (which the lowerer hides everywhere else), at the pane's width.
-        const empty = split > 0 && detail < 0, own = routes[0]?.querySelector('[navigationSplit="placeholder"]'), box = routes[0]?.parentElement;
+        const empty = split > 0 && detail < 0, own = routes[0]?.querySelector('[navigationSplit="placeholder"]'), box = viewParent(routes[0]);
         own?.toggleAttribute("data-exact-split-placeholder", empty); box?.toggleAttribute("data-exact-split-empty", empty && !own);
         if (empty) { box.style.setProperty("--exact-split", `${split}px`); own && routes[0].style.setProperty("--exact-split-pane", `${(routes[0].offsetParent ?? box).clientWidth - split}px`); }
       }
@@ -481,12 +485,8 @@ export const navigation = { personScrolls: 0, // the person's scrolls (`byPerson
     };
   },
 };
-// @ref LLP 1047 D5 — springs, holds and drags (`motion-glue.js`) and virtualized collections
-// (`collection-glue.js`) are after-paint pieces, fetched when a batch first needs one. Until they arrive
-// their calls wait in order and replay then; before any use, a call with nothing to reconcile is dropped,
-// and a style is set at once, as the controller sets one with nothing held. `o.wasm(name, bytes)` is one
-// wasm call's reply, or null before the wasm; `o.replayed()` follows a replay, as the end of a batch
-// follows its ops.
+// LLP 1047 D5: calls to motion-glue.js and collection-glue.js queue in order until their after-paint piece loads. Before use, drop no-op reconciliations and write styles immediately.
+// `o.wasm(name, bytes)` returns a wasm reply, or null before boot; `o.replayed()` reconciles after replay.
 // Work after a rendering opportunity (two animation frames) or a second, whichever is first, once: a page in a frame scrolled out of view gets no frames (LLP 1122's queue item (3) and its QUEUE follow-up); no timer under the agent, whose clock owns time.
 export function afterPaint(fn, agent = false) { let ran = false; const once = () => { if (!ran) { ran = true; fn(); } }; requestAnimationFrame(() => requestAnimationFrame(once)); if (!agent) setTimeout(once, 1000); }
 export function afterPaintPieces(load, o) {
@@ -551,12 +551,8 @@ export function afterPaintPieces(load, o) {
     return p && c ? Promise.all([p, c]) : (p ?? c ?? null);
   } };
 }
-// @ref LLP 1063 — -exact-exit-animation and -exact-layout-transition play in `presence-glue.js`, fetched when a batch
-// first carries either row, or after first paint where the plan names either (`preload`: a bound layout transition may
-// declare nothing at boot; a batch before it lands, at boot or a person's first press, still jumps); the agent waits
-// for it (`pending`, bounded by its deadline). A batch with an exit that arrives before the module does waits for it,
-// and every batch after it waits behind it, so no exit is lost and order holds; the caller hands them back through
-// `apply`. `live` is the module, once loaded.
+// LLP 1063: preload presence-glue.js after paint for declared layout or exit motion; boot and first presses jump until loaded.
+// Queue exits and later batches until loading finishes. The agent waits on bounded pending work.
 export function presenceLoader(load, root, apply, log) {
   let live = null, loading = null, unavailable = false, scheduled = null;
   const held = [], row = op => op.op === 'exit' || /(^|;)\s*--exact-(layout-transition|exit-animation)\s*:/.test((op.css ?? '').replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""'));
@@ -614,19 +610,13 @@ export function animationClock(now, settled, synced) {
     },
   };
 }
-// Synced animations (LLP 1055.002): a node whose `animation-timeline` is `clock(Name)` carries
-// `--exact-animation-clock:Name` (css.rs), and each CSS animation on it joins that clock. A clock is one origin, set
-// when an animation joins it idle (no other member unfinished) and kept while it is busy; a joiner starts on the latest
-// cycle boundary at or before it joins (a cycle is two iterations under `alternate`), so it ends where it would.
-// `start` is the synced start at `now` (the agent's clock seeks from it); `sync`, after a commit, sets each joined or
-// resumed animation's `startTime` once on the page's timeline. Nothing runs per frame.
+// LLP 1055.002: clock(Name) animations share an origin. Idle clocks start now; joiners use the latest cycle boundary.
+// Alternate animations count a pair of iterations as one cycle. sync updates startTime once per commit.
 export function animationClocks(root) {
   const origins = new Map(), members = new Map(), paused = new WeakMap(), clocked = new WeakMap();
   const clockOf = a => a.animationName === undefined ? '' : a.effect?.target?.style?.getPropertyValue('--exact-animation-clock').trim() ?? '';
   const live = a => a.effect?.target?.isConnected && a.playState !== 'idle' && a.playState !== 'finished';
-  // Each commit (`sync`, or the agent's `register`) first lets go of every member whose node left, whose play ended, or
-  // that moved to another clock: it holds no clock busy, and a removed screen's targets are not kept for the page's
-  // lifetime.
+  // Release departed, ended or retargeted animations so they do not keep clocks busy.
   const commit = () => {
     for (const [c, m] of members) { for (const b of m) if (!live(b) || clockOf(b) !== c) m.delete(b); if (!m.size) members.delete(c); }
   };
@@ -709,11 +699,8 @@ function followScroll(el, enabled) {
 }
   return { followedScrolls, followScroll, settleFollow, rememberScroll };
 }
-// One scheme allowlist for every URL the page can navigate to: a link's `href` (an authored `link`, an inline run bound
-// to data, a Markdown link), an iframe's `src`, and `openURL`. A `javascript:` URL in any of them runs in this page's
-// origin. The browser's own parser reads the scheme, past the whitespace and control characters it may hide behind.
-// `openURL` alone also takes a scheme app.json's `open_url` declares (`exact.openSchemes`, `declaredScheme`), never one
-// that runs or reads content.
+// Use the browser URL parser to normalize schemes, including hidden whitespace, for every navigable URL.
+// openURL also permits declared external schemes, excluding schemes that execute or read page content.
 export const declaredScheme = protocol => !/^(javascript|vbscript|data|file|filesystem|blob|about|view-source|jar|intent|content):$/.test(protocol) && (globalThis.exact?.openSchemes ?? []).includes(protocol.slice(0, -1));
 export function navigableURL(href, base = document.baseURI) {
   try { const url = new URL(href, base); return ["http:", "https:", "mailto:", "tel:"].includes(url.protocol) ? url.href : null; } catch { return null; }
@@ -730,9 +717,7 @@ export function refuseURL(el, name, value) {
   console.warn(`exact: refused ${name} ${JSON.stringify(String(value).slice(0, 80))}: only http, https, mailto and tel navigate${name === "src" ? ", and data: in a sandbox without allow-same-origin" : ""}`);
   if (name === "src") el.setAttribute(name, "about:blank"); else el.removeAttribute(name);
 }
-// A list item's paragraph (indent > 0, LLP 1045 D4) is a block padded by the item's indent; its marker (flags 32), a 40 px
-// box pulled into the gutter by the block's negative `text-indent`, ends at the indent (`flex-end`, overflowing leftwards as
-// the outside marker does): `<ul>`/`<ol>`'s layout, which native hosts copy with a head indent (exact-markdown's `LIST_INDENT`).
+// LLP 1045 D4: a list marker ends at the paragraph indent, like an outside HTML list marker.
 export function renderMarkup(el, json) {
   let pieces;
   try { pieces = JSON.parse(json); } catch { pieces = []; }
@@ -771,9 +756,7 @@ export function renderMarkup(el, json) {
     });
   }
 }
-// @ref LLP 1007 §6 — a page the dev server serves names its current generation, and its first boot is that one, not
-// app.wasm's older baked plan (a deep link booted stale on 2026-09-22). dev.js supplies it once asked (glue.js asks
-// when the wasm is up); without it, or with none in 5 s, the page boots the baked plan.
+// LLP 1007 §6: boot the dev generation when named; use the baked plan if none arrives within five seconds
 export function devFirst() {
   if (!document.querySelector('meta[name="exact-dev-generation"]')) return null;
   const slot = globalThis.exactDevFirst ??= {};
@@ -783,9 +766,7 @@ export function devFirst() {
     if (slot.provide) ask(); else slot.ready = ask;
   });
 }
-// Refusals and malformed request bodies are known while their enclosing batch is still applying. Deliver them on the
-// next microtask so their commits cannot re-enter `apply` halfway through that batch; in flight until then, so a wait
-// sees what their parse asks for next.
+// Defer refusal replies until the batch finishes to prevent reentrant commits; count them in flight through delivery
 export function deferredFulfill(fulfill, inflight) {
   return (...args) => { const p = Promise.resolve().then(() => fulfill(...args)); inflight.add(p); p.finally(() => inflight.delete(p)); };
 }
@@ -896,8 +877,7 @@ export function inertAncestor(el) {
   }
   return null;
 }
-// The page's environment: the safe-area insets from a hidden probe's padding, and the
-// keyboard's height as the visual viewport reports it.
+// Read safe-area insets from probe padding and keyboard height from the visual viewport
 let probe;
 export function environment() {
   if (!probe) {
@@ -905,7 +885,6 @@ export function environment() {
     probe.style.cssText = "position:fixed;inset:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)";
     document.body.append(probe);
   }
-  const r2 = (x) => Math.round(x * 100) / 100;
   const cs = getComputedStyle(probe);
   return {
     "safe-area-inset-top": r2(parseFloat(cs.paddingTop) || 0),
@@ -916,35 +895,71 @@ export function environment() {
     ...foldEnv(),
   };
 }
-// @ref LLP 1078 D6, D7 — the fold as the browser reports it: the Device Posture API's `navigator.devicePosture.type`
-// and the viewport segments `window.viewport.segments` (two or more means a divider splits the viewport; the columns
-// are the distinct lefts, the rows the distinct tops). Where the browser lacks the APIs: `continuous`, 1 × 1, which is
-// also what Chromium reports on a flat display. Under the agent, `prefer posture` and `prefer segments` go through
-// CDP's display-feature and posture overrides (the driver), so the browser's own readings change; where CDP offers
-// none, the driver's substitute lands here (`preferFold`) and stands in for them — the facts and `layout.env`, not
-// CSS's own `env()` resolution. The substitute lives on `globalThis.exact`: the JS target's agent reads its own copy of
-// this module (`agent-navigation.js`), and both copies must agree.
-const foldSubstitute = () => globalThis.exact?.foldSubstitute ?? null;
+// Read CSS when the JS fold interfaces are absent (LLP 1078 D6). Share agent substitutes with agent-navigation.js; they change facts, not CSS env() resolution (D7).
 const r2 = (x) => Math.round(x * 100) / 100;
 function readFold() {
-  const posture = globalThis.navigator?.devicePosture?.type === "folded" ? "folded" : "continuous";
+  const posture = globalThis.navigator?.devicePosture?.type ?? (foldMedia('(device-posture: folded)') ? 'folded' : 'continuous');
   const segments = globalThis.viewport?.segments;
-  const rects = Array.isArray(segments) && segments.length >= 2 ? segments.map((s) => [s.x, s.y, s.width, s.height]) : [];
-  const cols = rects.length ? new Set(rects.map((r) => r[0])).size : 1, rows = rects.length ? new Set(rects.map((r) => r[1])).size : 1;
-  return { posture, cols, rows, rects };
+  if (Array.isArray(segments) && segments.length >= 2) {
+    const rects = segments.map(s => [s.x, s.y, s.width, s.height]);
+    return { posture, cols: new Set(rects.map(r => r[0])).size, rows: new Set(rects.map(r => r[1])).size, rects };
+  }
+  const cols = foldCount('horizontal'), rows = foldCount('vertical'); return { posture, cols, rows, rects: foldRects(cols, rows) };
 }
-export const fold = () => foldSubstitute() ?? readFold();
-/** `layout.env`'s four names (LLP 1012 §1). */
+const foldQueries = new Map(), foldListeners = new Set();
+let foldProbe;
+function foldMedia(query) {
+  let list = foldQueries.get(query);
+  if (!list && typeof globalThis.matchMedia === 'function') {
+    list = matchMedia(query);
+    foldQueries.set(query, list);
+    list.addEventListener('change', () => { for (const changed of foldListeners) { changed(); } });
+  }
+  return list?.matches === true;
+}
+function foldCount(axis) {
+  let count = 1;
+  while (count < 255 && foldMedia(`(${axis}-viewport-segments >= ${count + 1})`)) { count++; }
+  return count;
+}
+function foldRects(cols, rows) {
+  if (cols * rows === 1 || !globalThis.document?.body || typeof globalThis.getComputedStyle !== 'function') { return []; }
+  if (!foldProbe) {
+    foldProbe = document.createElement('div');
+    foldProbe.style.cssText = 'position:fixed;width:0;height:0;visibility:hidden;pointer-events:none;contain:strict';
+    document.body.append(foldProbe);
+  }
+  const rects = [], fields = ['left', 'top', 'width', 'height'];
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < cols; column++) {
+      for (const field of fields) { foldProbe.style.setProperty(`--exact-segment-${field}`, `env(viewport-segment-${field} ${column} ${row}, -1px)`); }
+      const style = getComputedStyle(foldProbe), rect = fields.map(field => parseFloat(style.getPropertyValue(`--exact-segment-${field}`)));
+      if (!rect.every(value => Number.isFinite(value) && value >= 0)) { return []; }
+      rects.push(rect);
+    }
+  }
+  return rects;
+}
+export const fold = () => globalThis.exact?.foldSubstitute ?? readFold();
+/** layout.env's names (LLP 1012 section 1). */
 export function foldEnv() {
   const f = fold();
-  return { "device-posture": f.posture, "horizontal-viewport-segments": f.cols, "vertical-viewport-segments": f.rows, "viewport-segments": f.rects.map((r) => r.map(r2)) };
+  return { "device-posture": f.posture, "horizontal-viewport-segments": f.cols, "vertical-viewport-segments": f.rows, "viewport-segments": f.rects.map(r => r.map(r2)) };
 }
-/** The fold as `exact_resize`'s facts word carries it beside the preference bits (LLP 1078 D6): bit 8 `folded`, bits 9–16 the columns, 17–24 the rows. Bit 25 is reserved. */
-export function foldBits() { const f = fold(); return (f.posture === "folded" ? 256 : 0) | ((f.cols & 255) << 9) | ((f.rows & 255) << 17); }
+/** LLP 1078 D6: bit 8 is folded, bits 9–16 count columns, 17–24 count rows; bit 25 is reserved. */
+export function foldBits() {
+  const f = fold();
+  return (f.posture === "folded" ? 256 : 0) | ((f.cols & 255) << 9) | ((f.rows & 255) << 17);
+}
 export function onFold(changed) {
-  globalThis.navigator?.devicePosture?.addEventListener?.("change", changed);
-  addEventListener("resize", changed);
-} /** A context menu's popover, opened for the `contextmenu` event `e` (LLP 1021 §5.1): `find` answers `[popover, source]` when there is still one to open. It opens once the press that asked is over: a Mac's `contextmenu` comes with the button still down, and Firefox and WebKit take the release that follows, outside a popover just opened, for its light dismiss, so the menu never showed there. And it opens at the pointer (LLP 1115.000 D4.7): where the press was is left on the popover (`--exact-context-x`, `-y`) until it closes, for the page's sheet to place it by (neutral.css; the shell's own reads neither). A menu key has no point, and its menu opens at its row. */ export function contextAt(e, find) { const open = () => { const [p, source] = find() ?? []; if (!p) return; if (e.clientX || e.clientY) { p.style.setProperty("--exact-context-x", `${e.clientX}px`); p.style.setProperty("--exact-context-y", `${e.clientY}px`); p.exactAt ??= (p.addEventListener("toggle", t => { if (t.newState === "closed") for (const axis of "xy") p.style.removeProperty(`--exact-context-${axis}`); }), true); } try { p.showPopover({ source }); } catch {} }, ends = ["pointerup", "pointercancel", "mouseup"], end = () => { for (const type of ends) removeEventListener(type, end, true); setTimeout(open); }; if (!e.buttons) return void setTimeout(open); for (const type of ends) addEventListener(type, end, true); }
+  // Install media queries even when no resource reads viewport facts.
+  readFold();
+  foldListeners.add(changed);
+  globalThis.navigator?.devicePosture?.addEventListener?.('change', changed);
+  addEventListener('resize', changed);
+}
+/** A context menu's popover, opened for the `contextmenu` event `e` (LLP 1021 §5.1): `find` answers `[popover, source]` when there is still one to open. It opens once the press that asked is over: a Mac's `contextmenu` comes with the button still down, and Firefox and WebKit take the release that follows, outside a popover just opened, for its light dismiss, so the menu never showed there. And it opens at the pointer (LLP 1115.000 D4.7): where the press was is left on the popover (`--exact-context-x`, `-y`) until it closes, for the page's sheet to place it by (neutral.css; the shell's own reads neither). A menu key has no point, and its menu opens at its row. */
+export function contextAt(e, find) { const open = () => { const [p, source] = find() ?? []; if (!p) return; if (e.clientX || e.clientY) { p.style.setProperty("--exact-context-x", `${e.clientX}px`); p.style.setProperty("--exact-context-y", `${e.clientY}px`); p.exactAt ??= (p.addEventListener("toggle", t => { if (t.newState === "closed") for (const axis of "xy") p.style.removeProperty(`--exact-context-${axis}`); }), true); } try { p.showPopover({ source }); } catch {} }, ends = ["pointerup", "pointercancel", "mouseup"], end = () => { for (const type of ends) removeEventListener(type, end, true); setTimeout(open); }; if (!e.buttons) return void setTimeout(open); for (const type of ends) addEventListener(type, end, true); }
 /** The grid a host without a fold makes for `prefer segments <cols>x<rows> [gap <points>]`: the viewport split evenly, the gap centred on each divider; refused by name. */
 export function evenSegments(width, height, cols, rows, gap = 0) {
   if (!(cols >= 1 && rows >= 1)) throw Object.assign(new Error(`segments ${cols}x${rows}: each count is at least 1`), { malformed: true });
@@ -982,17 +997,12 @@ const queries = () => (preferenceQueries ??= [["(prefers-reduced-motion: reduce)
 export const preferences = () => { const bits = queries().reduce((bits, [q, bit]) => bits | (q.matches ? bit : 0), 0), pinned = globalThis.exact?.systemScheme; return pinned ? (bits & ~16) | (pinned === "dark" ? 16 : 0) : bits; }; // a dev pin's scheme is the system's (LLP 1122 D4; dev.js)
 export const displayMode = () => DISPLAY_MODES[(preferences() >>> 29) & 7]; /** A phone-sized screen (its short side under 600 CSS px): the GPU tier's class when the adapter says nothing it knows, and never `high` (LLP 1139.003 D2). */ export const handheld = (platform = globalThis) => Math.min(platform.screen?.width ?? Infinity, platform.screen?.height ?? Infinity) < 600;
 export const onPreferences = (changed) => queries().forEach(([q]) => q.addEventListener("change", changed));
-// @ref LLP 1069.000 D2 — the page's facts as `exact_set_page` takes them: bit 0 `document.visibilityState == "hidden"`, bit 1
-// `!navigator.onLine`, bit 2 `typeof navigator.share === "function"` (LLP 1069.003 D5), bit 3 `typeof showOpenFilePicker ===
-// "function"` (LLP 1069.010 D2; studio diary R31), bit 4 `!document.hasFocus()` (#114), told again at the window's `focus` and `blur`,
-// bits 5–6 Navigation Timing's `type` (runner/src/page.rs `NAVIGATION_TYPES`; a prerender's is `navigate`), bit 8 `navigator.canShare({files})` for a
-// small text file, bit 9 a picture of an element in a share, which the web never takes and only `prefer` sets (LLP 1125 D12), bit 10 from a `pagehide` with `persisted` until its `pageshow`, bits 11–12 the GPU tier, 0 high, 1 mid, 2 low (LLP 1139.003 D2), bits 16–31 those `pageshow` events (the back/forward cache, LLP 1069.000 D2). Under the agent the drive's values stand in (visible, online, a share sheet, the pickers, focus, a `navigate`, GPU tier `high`: LLP 1069.000 D6), set by `prefer`'s `page` group; the machine is never read, but for the display's scale (below).
+// LLP 1069.000 D2/D6: pack page facts; agent preferences replace browser readings except display scale.
+// Picture sharing is agent-only; persisted pageshow events count back/forward cache restores.
 export function pageReporter(agent, platform = globalThis) {
   const facts = { "visibility-state": "visible", online: true, "can-share": true, "can-share-files": true, "can-share-pictures": false, "can-open-files": true, "has-focus": true, "root-font-size": 16, "gpu-tier": "high", "iframe-partition": false }, cache = { persisted: false, restores: 0 }; // cache: the drive's page is never put away
   let sharesFiles; const canShareFiles = () => sharesFiles ??= (() => { try { return typeof platform.navigator.canShare === "function" && platform.navigator.canShare({ files: [new platform.File([""], "a.txt", { type: "text/plain" })] }) === true; } catch { return false; } })();
-  // @ref LLP 1069.000 D3 — the root font size: the document element's computed `font-size`, the browser's setting
-  // unless a page sets it; under the agent the drive sets it on the element (`prefer root-font-size`). The app's own
-  // size (`appRootFontSize`) is set over it and read past.
+  // LLP 1069.000 D3: read the browser root font beneath the app override; the agent supplies its preference.
   const rootFontSize = () => agent ? facts["root-font-size"] : beneathApp(platform, () => parseFloat(platform.getComputedStyle(platform.document.documentElement).fontSize) || 16), displayScale = () => platform.devicePixelRatio > 0 ? platform.devicePixelRatio : 1; // @ref LLP 1115.000 D10.3 — the display's scale is the page's own `devicePixelRatio`, read under the agent too: the drive sets it through the browser's emulation (`prefer display-scale`), never by a substitute, and a zoom fires `resize`, which tells it again
   const loaded = agent ? "" : platform.performance?.getEntriesByType?.("navigation")?.[0]?.type; let told; const gpuTier = () => told ?? (handheld(platform) ? "low" : "high"); // @ref LLP 1139.003 D2 — the GPU tier: the adapter's, told by gpu-glue.js before the device is made (gpu-tier.js), else the screen's class; the agent's is `high` until `prefer gpu-tier`
   const navigationType = ["reload", "back_forward"].includes(loaded) ? loaded : "navigate";
@@ -1027,11 +1037,8 @@ export function appRootFontSize(value, say, platform = globalThis) {
   rule.textContent = px ? `:root{font-size:${value}px!important}` : `:root{font-size:calc(var(--exact-host-font-size, 100%) * ${ratio})!important}`;
   refitTexts();
 }
-// @ref LLP 1116.001 D1.4 — `-exact-fit: shrink`. The browser lays the page out, so it picks the scale the kernel would,
-// by the kernel's rule (kernel/src/ layout/fit.rs): the text's min-content width against its room, down to half its
-// size (display text bigger than twice the root's: down to the root size). It draws at it as CSS `zoom` on the element,
-// which scales the text, its runs, line height and letter spacing together and leaves the authored rows alone; a style
-// write clears it and the next pass sets it again.
+// LLP 1116.001 D1.4: fit a text's min-content width to its room, down to half size (or the root size for text above twice the root), as kernel/src/layout/fit.rs does.
+// CSS zoom scales text, runs, leading and tracking together; authored rows stay. Restyling clears the scale, then the next pass refits.
 export function fitText(el) {
   el.style.zoom = "";
   const cs = getComputedStyle(el), px = (v) => parseFloat(v) || 0;
@@ -1043,7 +1050,7 @@ export function fitText(el) {
   // A flex item that may shrink (`min-width: 0`) would shrink its min-content width back to the room it has.
   el.style.width = "min-content"; el.style.flexShrink = "0"; const natural = content(); el.style.width = width; el.style.flexShrink = flexShrink;
   // Sized by its text, it has its container's room.
-  const up = el.parentElement, ps = up && getComputedStyle(up);
+  const up = viewParent(el), ps = up && getComputedStyle(up);
   const room = box + 0.5 < natural || !up ? box : up.clientWidth - px(ps.paddingLeft) - px(ps.paddingRight) - Math.max(0, px(cs.marginLeft)) - Math.max(0, px(cs.marginRight));
   if (!(natural > room + 0.01)) return;
   const size = px(cs.fontSize), root = px(getComputedStyle(document.documentElement).fontSize);
@@ -1087,10 +1094,7 @@ export function placeReporter(params, platform = globalThis) {
     return [platform.navigator.language, platform.Intl.DateTimeFormat().resolvedOptions().timeZone, seed, platform.Intl.DateTimeFormat().resolvedOptions().locale].join('\0'); // the last: ECMA-402's default locale, which a browser's formatters use
   };
 }
-// @ref LLP 1027.000.000 D3 — under the agent the date at the clock's zero is the drive's epoch (default
-// 2026-01-01T00:00:00Z), and the offset its zone's at the virtual instant `elapsed` names; `clock +N` moves the date
-// because `now()` moves, and the glue tells the offset again after each clock move, so crossing a DST change re-answers
-// it (LLP 1069.007 D2).
+// LLP 1027.000.000 D3: agent time starts at the drive epoch; clock movement updates the date and zone offset.
 export function timeReporter(params, platform = globalThis) {
   return (elapsed) => {
     if (!(AGENT_ADMITTED && params.has('agent'))) return [platform.Date.now() - elapsed, -new platform.Date().getTimezoneOffset()];
@@ -1101,9 +1105,7 @@ export function timeReporter(params, platform = globalThis) {
     return [epoch, (Date.UTC(at.year, at.month - 1, at.day, at.hour, at.minute, at.second) - Math.floor((epoch + elapsed) / 1000) * 1000) / 60000];
   };
 }
-// Where the page launches (LLP 1038 D5): its path and query, less a drive's own parameters, which are the host's facts
-// and not a route's — a driven page numbers its visits as a native host does (feed F16). The JS target launches here
-// too (rt.js re-exports it).
+// LLP 1038 D5: launch at the page path, query and fragment, excluding agent-only parameters.
 export function launchLocation(platform = globalThis) {
   const { pathname, search, hash = "" } = platform.location, q = new URLSearchParams(search); // the fragment is the launch's too (LLP 1153 D5)
   if (!(AGENT_ADMITTED && q.has('agent'))) return pathname + search + hash;
@@ -1118,10 +1120,11 @@ let pagePlace; export const reportPlace = () => (pagePlace ??= placeReporter(lau
 // A store write in the page (LLP 1018 D6, LLP 1116 D5, LLP 1027 D4): a secret or state the quota refuses sets the kept answers aside, a cache the runner bounds together, and is tried once more, the kept answers put back if it fails again; a kept answer it refuses leaves the older one, which the next launch may still match, and is said.
 export function storeInPage(storage, name, value, warn = console.warn) { const key = name.startsWith("exact.state.") ? name : "exact.secret." + name, write = () => value == null ? storage.removeItem(key) : storage.setItem(key, value);
   try { try { write(); } catch (e) { if (name.startsWith("exact.kept.") || !/quota/i.test(e?.name ?? "")) throw e; const aside = Array.from({ length: storage.length }, (_, i) => storage.key(i)).filter(k => k?.startsWith("exact.secret.exact.kept.")).map(k => [k, storage.getItem(k)]); for (const [k] of aside) storage.removeItem(k); try { write(); } catch (again) { for (const [k, v] of aside) try { storage.setItem(k, v); } catch {} throw again; } } } catch (e) { warn("exact: store", name, String(e)); return false; } return true; }
-/** Failed writes belong to the page until a later commit persists or replaces them. */ export function pageStore(storage = () => localStorage, warn = console.warn) { const pending = new Map();
-  return { set(name, value) { pending.set(name, { value, warned: false }); }, flush() { for (const [name, entry] of pending) {
-    const report = (...line) => { if (!entry.warned) { entry.warned = true; warn(...line); } }; try { if (storeInPage(storage(), name, entry.value, report)) pending.delete(name); } catch (e) { report("exact: store", name, String(e)); }
-  } } }; }
+/** Failed writes retry under the shared lease, against their original durable value. */ export function pageStore(storage = () => localStorage, warn = console.warn, locks = globalThis.navigator?.locks) { const pending = new Map();
+  return { discard(name) { pending.delete(name); }, set(name, value) { pending.set(name, { value, warned: false }); }, flush() { const jobs = []; for (const [name, entry] of pending) { const key = name.startsWith("exact.state.") ? name : "exact.secret." + name, live = () => pending.get(name) === entry; const report = (...line) => { if (!entry.warned) { entry.warned = true; warn(...line); } }, failed = e => { if (live()) { if (!Object.hasOwn(entry, "before")) pending.delete(name); report("exact: store", name, String(e)); } };
+    const write = () => { try { const disk = storage(), before = disk.getItem(key); if (Object.hasOwn(entry, "before") && entry.before !== before) { pending.delete(name); return; } entry.before = before; if (storeInPage(disk, name, entry.value, report)) pending.delete(name); } catch (e) { failed(e); } };
+    if (Object.hasOwn(entry, "before")) { entry.retry ??= import('./storage-environment.js').then(m => m.retrySecretWrite(key, live, write, locks)).catch(failed).finally(() => { delete entry.retry; }); jobs.push(entry.retry); } else write();
+  } return Promise.all(jobs); } }; }
 // An iframe guest's origin as authored when its `src` or `sandbox` was committed (an opaque
 // sandbox posts as "null"), which a `message` from it must match. The authored document owns
 // the channel: a later load revokes it until the app commits a new source.
@@ -1140,10 +1143,8 @@ export function guestMessageAuthorized(el, eventOrigin) {
   const state = iframeOrigins.get(el);
   return Boolean(state && !state.revoked && (state.opaque ? eventOrigin === "null" : eventOrigin === state.origin));
 }
-
-// @ref LLP 1069.001 D4 (amended 2026-10-04) — a select, range or date is controlled as a text field is: the committed
-// `value` is written when it changes, and shown again after the options change or a refused `type`; after the action
-// that heard the person (`acted`) it keeps their choice, as the web build's does.
+// LLP 1069.001 D4: restore controlled choices after options change or an edit is refused.
+// After the input action (`acted`), keep the person's choice.
 const VALUED = new Set(["range", "date", "time", "datetime-local"]);
 export const valuedControl = (el) => el instanceof HTMLSelectElement || (el instanceof HTMLInputElement && VALUED.has(el.type));
 export function settleValue(el, acted = false) {
@@ -1159,9 +1160,7 @@ export const textField = (el) => el instanceof HTMLTextAreaElement ? el.getAttri
 export const editMenu = (target) => { const f = target.closest("input,textarea,[contenteditable]"); return !!f && (!(f instanceof HTMLInputElement) || textField(f)); }; // a `contextmenu` from a text field, a textarea or an editable region opens the browser's edit menu and runs no handler (review b5-b 3); a control's input (a checkbox, switch, radio, range, date, time or file) has no such menu, so its node's handler runs and its popover opens, as Chrome sends the event and macOS runs it (#487)
 // Host kinds 40–42 carry UTF-16 start,end,direction before the field’s text.
 export const fieldSelection = (el) => { const end = el.value.length; return `${el.selectionStart ?? end},${el.selectionEnd ?? end},${el.selectionDirection ?? "none"},`; };
-// A radio's group as committed again (x2apps survey #2): the browser checked the radio and unchecked its group at once;
-// the action decides, and one that refuses snaps the group back. `bound` reads a radio's committed `checked` (undefined
-// when it has none); the unchecks go first, so the radio left checked is the committed one.
+// Restore unchecked peers first so the committed radio wins; an absent bound value is uncontrolled.
 export function settleRadios(el, bound) {
   const group = el.name ? [...document.querySelectorAll('input[type="radio"]')].filter((r) => r.name === el.name) : [el];
   for (const r of group) if (bound(r) === false && r.checked) r.checked = false;
@@ -1224,7 +1223,6 @@ export function grantOrigins(memory) {
     } catch { return -1; }
   } };
 }
-
 // grant admission: begin — self-contained; the JS target's build (host/web-js/build.mjs) moves these lines into a module of
 // their own, so a page that admits nothing before a lazy chunk does not carry them; the wasm host keeps them here (boot.mjs).
 // Match only the sealed, typed output of exact-runner's Rust grant parser.
@@ -1448,8 +1446,7 @@ export function coversPath(set, capability, path) {
   return !!target && set.entries.some(([, , grant]) => grant?.[0] === kind && grant.slice(1).every((part, index) => target[index] === part));
 }
 // grant admission: end
-// Text selections use source UTF-16 offsets; a Markdown <br> represents one newline.
-const selectedTexts = new Map();
+const selectedTexts = new Map(); // Text selections use source UTF-16 offsets; a Markdown <br> represents one newline.
 function textSource(e) { return e.nodeType === Node.TEXT_NODE ? e.data : e.nodeName === 'BR' ? "\n" : [...e.childNodes].map(textSource).join(''); }
 function textPosition(e, offset) {
   const walker = document.createTreeWalker(e, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
@@ -1464,19 +1461,22 @@ function selectionRects(e, a, b) {
   const range = document.createRange(); range.setStart(...textPosition(e, a)); range.setEnd(...textPosition(e, b));
   return [...range.getClientRects()].map(r => [r.x, r.y, r.width, r.height, false, false]);
 }
+function selectionChanged() {
+  const s = getSelection(), r = s.rangeCount && !s.isCollapsed ? s.getRangeAt(0) : null;
+  for (const [e, h] of selectedTexts) {
+    if (!e.isConnected) { selectedTexts.delete(e); continue; }
+    const at = (n, o) => { const p = document.createRange(); p.selectNodeContents(e); const c = p.comparePoint(n, o); if (!c) p.setEnd(n, o); return c < 0 ? 0 : textSource(p.cloneContents()).length; };
+    let a = 0, b = 0;
+    if (r?.intersectsNode(e)) { a = at(r.startContainer, r.startOffset); b = at(r.endContainer, r.endOffset); }
+    if (a === b) a = b = 0;
+    if (h.a !== a || h.b !== b) { h.a = a; h.b = b; h.report(textSource(e).slice(a, b), a, b, selectionRects(e, a, b)); }
+  }
+  if (!selectedTexts.size) document.removeEventListener("selectionchange", selectionChanged);
+}
 export function onSelection(e, report) {
-  if (!selectedTexts.size) document.addEventListener("selectionchange", () => {
-    const s = getSelection(), r = s.rangeCount && !s.isCollapsed ? s.getRangeAt(0) : null;
-    for (const [e, h] of selectedTexts) {
-      if (!e.isConnected) { selectedTexts.delete(e); continue; }
-      const at = (n, o) => { const p = document.createRange(); p.selectNodeContents(e); const c = p.comparePoint(n, o); if (!c) p.setEnd(n, o); return c < 0 ? 0 : textSource(p.cloneContents()).length; };
-      let a = 0, b = 0;
-      if (r?.intersectsNode(e)) { a = at(r.startContainer, r.startOffset); b = at(r.endContainer, r.endOffset); }
-      if (a === b) a = b = 0;
-      if (h.a !== a || h.b !== b) { h.a = a; h.b = b; h.report(textSource(e).slice(a, b), a, b, selectionRects(e, a, b)); }
-    }
-  });
-  selectedTexts.set(e, { report, a: 0, b: 0 });
+  const held = { report, a: 0, b: 0 }; selectedTexts.set(e, held);
+  document.addEventListener("selectionchange", selectionChanged);
+  return () => { if (selectedTexts.get(e) === held) selectedTexts.delete(e); if (!selectedTexts.size) document.removeEventListener("selectionchange", selectionChanged); };
 }
 // HTML's methods and source, shared by both web targets (LLP 1021 §4).
 export function popoverCommand(method, id, source, say) {

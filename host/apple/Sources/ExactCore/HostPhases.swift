@@ -48,7 +48,7 @@ package final class HostPhases: @unchecked Sendable {
     /// Operation counts are process-wide: the owner and host phases are shared
     /// by sessions. Node ids are session-local, so these counters claim no site.
     package enum Operation: String, CaseIterable {
-        case ownerSync, intrinsicReports, intrinsicLayoutRequests, nativeControlMeasurements
+        case ownerSync, intrinsicReports, intrinsicLayoutRequests, nativeControlMeasurements, nodeLayouts
     }
     private var counts: [Operation: Int] = [:]
     private var countSince: Double?
@@ -57,6 +57,9 @@ package final class HostPhases: @unchecked Sendable {
         if countSince == nil { countSince = clock() }
         counts[operation, default: 0] += amount
     }
+    /// How many times `operation` has been counted while recording.
+    package func counted(_ operation: Operation) -> Int { counts[operation, default: 0] }
+
     package func work() -> [String: Any] {
         ["scope": "process", "site": "unknown", "measured": on,
          "since": countSince.map { $0 * 1000 } ?? NSNull(), "timebase": "media-clock-ms",
@@ -64,22 +67,44 @@ package final class HostPhases: @unchecked Sendable {
          "coverage": ["ownerSync": "main-thread calls submitted to the runtime owner",
                       "intrinsicReports": "sizes submitted through Runtime.intrinsics",
                       "intrinsicLayoutRequests": "Runtime.intrinsics calls, including unchanged sizes",
-                      "nativeControlMeasurements": "button, field chrome and mounted value-control measurement calls"]]
+                      "nativeControlMeasurements": "button, field chrome and mounted value-control measurement calls",
+                      "nodeLayouts": "nodes' views UIKit laid out (layoutSubviews)"]]
     }
 
     private struct Segment { let phase: Phase; let start: Double; let end: Double }
 
-    /// Segments kept: about a second of a busy fling's.
+    /// Segments the sampler keeps: about a second of a busy fling's.
     package static let capacity = 2048
-    /// Whether anything records: the host turns it on where its frame sampler
-    /// may run (not a production bake). Main thread only, as every phase is.
-    package var on = false {
-        didSet { if on && !oldValue { since = clock(); if countSince == nil { countSince = since } } }
+    /// Whether anything records: a frame sampler, which the host runs where
+    /// one may (not a production bake), or a measurement that holds them
+    /// (`hold`), as the card's measure of the screen does in any build. Either
+    /// adds up the phases' `total` and counts operations; only the sampler
+    /// keeps each phase's segments. Setting it sets the sampler's part. Main
+    /// thread only, as every phase is.
+    package var on: Bool {
+        get { sampling || holds > 0 }
+        set {
+            let was = on
+            if newValue, !sampling { since = clock() }
+            sampling = newValue
+            noteStart(wasOn: was)
+        }
     }
+    private var sampling = false, holds = 0
+    /// Keep recording until the matching `hold(false)`, whatever the sampler does.
+    package func hold(_ keep: Bool) {
+        let was = on
+        holds = max(0, holds + (keep ? 1 : -1))
+        noteStart(wasOn: was)
+    }
+    /// The counts cover the time from when recording first started.
+    private func noteStart(wasOn: Bool) { if on, !wasOn, countSince == nil { countSince = clock() } }
+    /// Seconds the phases have taken while recording, since launch
+    package private(set) var total = 0.0
     private var ring: [Segment] = []
     private var next = 0
-    /// Recording covers windows from here: when it was turned on, or the end
-    /// of the newest segment the ring has let go.
+    /// The sampler's segments cover windows from here: when it started, or the
+    /// end of the newest segment the ring has let go.
     private var since = Double.infinity
     private var open: [(phase: Phase, from: Double)] = []
 
@@ -108,6 +133,8 @@ package final class HostPhases: @unchecked Sendable {
 
     private func keep(_ phase: Phase, _ start: Double, _ end: Double) {
         guard end > start else { return }
+        total += end - start
+        guard sampling else { return }
         let segment = Segment(phase: phase, start: start, end: end)
         if ring.count < Self.capacity {
             ring.append(segment)
@@ -122,10 +149,10 @@ package final class HostPhases: @unchecked Sendable {
     /// `phases` (each one's ms and segments), `unattributed` (the window's
     /// ms no phase took: idle time, the platform's own work, anything not
     /// wrapped), and `coverage: partial` when recording does not reach back
-    /// to `from`. Nil while not recording. A phase still open is charged
-    /// when it closes, in the window it closes in.
+    /// to `from`. Nil while the sampler records nothing. A phase still open is
+    /// charged when it closes, in the window it closes in.
     package func window(from: Double, to: Double) -> [String: Any]? {
-        guard on, to > from else { return nil }
+        guard sampling, to > from else { return nil }
         var ms: [Phase: (ms: Double, n: Int)] = [:]
         for s in ring where s.end > from && s.start <= to {
             ms[s.phase, default: (0, 0)].ms += (min(s.end, to) - max(s.start, from)) * 1000

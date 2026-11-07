@@ -1738,8 +1738,15 @@ also give a text summary within that size and an image of the card outside that 
 (user, 2026-10-30), and the card holds Details and Share itself, so the menus offer
 only Show and Hide (user, 2026-10-31). "Let’s do it all"
 also admits live-clock scheduling, cursor reads, the development-only passive
-native-scroll experiment and macOS card/inspector controls. Production default-on
-requires measured adapter qualification. No production inspection endpoint or
+native-scroll experiment and macOS card/inspector controls. "Let's do this in a
+zero-cost way. When the Frame Health UI is hidden there should be zero cost in release
+builds" (user, 2026-11-02) admits collection in production builds while the
+frame-health card shows, and nothing while it is hidden. "When I don't scroll we
+should still be showing the screen is at 120fps and also measure work that could be
+happening that slow things down" (user, 2026-11-03) admits the card's observers of the
+screen while it shows, in every build: a passive `UIUpdateLink` for its window scene
+and two observers of the main run loop (LLP 1079.000 §7.4).
+Production default-on requires measured adapter qualification. No production inspection endpoint or
 remote telemetry is added.
 
 `clock` replaces a `wait` operation on purpose. If the motion graph is closed-form under
@@ -1809,15 +1816,20 @@ distributable IPA and EAS/AppDrop adapter above stay deferred otherwise.
 recs are ok", accepting the recommendation to waive the take for this lane and
 admit AppDrop as the remote tester-install path, TestFlight later (LLP 1030.003
 §6 Q4).
-`deploy.appdrop` makes an iOS binary row of `exact deploy --yes` build the
-`--archive --unsigned` `.ipa` against the stream's release record and publish it
-to AppDrop (creating the link the first time, writing it to app.json), and the
-install page offers the link.
-Unblocks sending one install link whose app stays current: bundles over the
-air, binaries through AppDrop. It lifts the `--unsigned` waiver's GPU refusal:
-a GPU card's digest leaves out a Mach-O's code signature (`code_digest`), so a
-re-signer keeps it and a code change still breaks it. The EAS adapter, signed
-distribution IPAs and automatic provisioning stay deferred.
+The lane is `bun exact.mjs share` (Eliot, 2026-11-02; replaces `deploy.appdrop`,
+which `exact deploy` no longer reads): it builds the `--archive --unsigned` `.ipa`
+and publishes it to AppDrop, printing the share link last on stdout, and agents are
+told to run it when an iPhone app is ready for a person to try. Each checkout keeps
+its link and the git branch it came from in the app's gitignored
+`.exact/appdrop.json`; a share from another branch refuses until `--new-link` or
+`--force` says which link it means. Unblocks sending a tester one link per branch
+with no account, committed state or AppDrop server change. It lifts the
+`--unsigned` waiver's GPU refusal: a GPU card's digest leaves out a Mach-O's code
+signature (`code_digest`), so a re-signer keeps it and a code change still breaks
+it. The EAS adapter, signed distribution IPAs and automatic provisioning stay
+deferred. **`share` (Charlie, waiver, 2026-11-02):** "Yes commit anything you think
+is good", answering Eliot's "Can merge the exact2 part that just auto-uploads to
+appdrop on the build?"
 
 **Admitted (Charlie, 2026-10-12, issue-fix ruling 5; take waived):**
 "intersect=: admit now — intersect=action {isIntersecting, intersectionRatio},

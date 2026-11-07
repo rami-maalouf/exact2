@@ -22,7 +22,9 @@ extension NavigationHost {
         if #available(iOS 26.0, tvOS 26.0, *) { capsule = shape.prominent }
         else { capsule = false }
         // older systems draw this as a plain item with inherited platform tint.
-        item.tintColor = nativeFace ? (shape.prominent ? (capsule ? presenter.accent.effectiveTint : nil) : authored) : nil
+        // a plain item that follows the tint takes its node's accent, as UIKit's own views do.
+        let plainFace = shape.followsTint ? presenter.views[shape.id]?.ownAccent ?? SystemColor.tint(1) : authored
+        item.tintColor = nativeFace ? (shape.prominent ? (capsule ? presenter.accent.effectiveTint : nil) : plainFace) : nil
         let font = image == nil ? shape.font : nil
         // title attributes cannot promise a symbol-only prominent foreground.
         let foreground = capsule && image == nil ? authored : nil

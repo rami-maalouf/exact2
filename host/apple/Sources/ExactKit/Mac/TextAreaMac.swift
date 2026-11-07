@@ -66,8 +66,8 @@ package final class TextArea: NSTextView {
     package override var focusRingMaskBounds: NSRect {
         guard let owner else { return super.focusRingMaskBounds }
         if !owner.isNativeTextControl { return convert(owner.focusRingMaskBounds, from: owner) }
-        guard let scroll = owner.textAreaScroll else { return super.focusRingMaskBounds }
-        return convert(scroll.bounds, from: scroll)
+        guard let scroll = owner.textAreaScroll else { return uncovered(super.focusRingMaskBounds) }
+        return uncovered(convert(scroll.bounds, from: scroll))
     }
     package override func drawFocusRingMask() {
         guard let owner else { super.drawFocusRingMask(); return }
@@ -89,7 +89,8 @@ package final class TextArea: NSTextView {
     package override func mouseDown(with event: NSEvent) {
         guard let owner else { return super.mouseDown(with: event) }
         if owner.pressesUntracked(self, event) { return }
-        owner.tracksPointer(event) { super.mouseDown(with: event) }
+        guard let fields = owner.presenter?.fieldSelections else { return owner.tracksPointer(event) { super.mouseDown(with: event) } }
+        fields.pressing(owner, event) { owner.tracksPointer(event) { super.mouseDown(with: event) } }
     }
     // The agent's window is never key: its every click counts, as at a node (`NodeView.everyClickCounts`).
     package override func acceptsFirstMouse(for event: NSEvent?) -> Bool { NodeView.everyClickCounts || super.acceptsFirstMouse(for: event) }
@@ -333,22 +334,22 @@ package final class TextArea: NSTextView {
                 .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
                 .foregroundColor: placeholderColor ?? (owner?.isNativeTextControl == true ? ThemeRoles.color("placeholder", in: self, or: NSColor.placeholderTextColor) : (textColor ?? SystemColor.canvasText).withAlphaComponent(0.3)),
             ]
+            // Its lines are typed text's lines, by the line height typing takes.
+            let style = (typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
             // A Markdown editor's placeholder sits at its first line's start
             // (LLP 1045 D11), as UIKit's and the web's do: string drawing aligns
             // natural text by the app's layout direction, not the paragraph's,
             // so the side is said.
             if let markup {
-                let style = NSMutableParagraphStyle(), direction = markup.direction(at: 0)
+                let direction = markup.direction(at: 0)
                 style.baseWritingDirection = direction
                 style.alignment = direction == .rightToLeft ? .right : .left
-                attributes[.paragraphStyle] = style
             } else if let owner {
                 // A plain field's at its start, by its own direction (LLP 1001 §1).
-                let style = NSMutableParagraphStyle()
                 style.baseWritingDirection = owner.fieldBaseDirection
                 style.alignment = owner.fieldAlignment
-                attributes[.paragraphStyle] = style
             }
+            attributes[.paragraphStyle] = style
             drawingAntialiased(owner?.drawsAntialiased == true) { (placeholder as NSString).draw(in: rect, withAttributes: attributes) }
         }
     }
@@ -525,13 +526,9 @@ extension NodeView {
         f.backgroundColor = ThemeRoles.color("Field", in: self, or: .textBackgroundColor)
         f.focusRingType = outlineNone ? .none : native ? .default : .exterior
         restyleFieldFocus()
-        f.textContainerInset = native ? FieldChromeCache.textareaInset(for: effectiveAppearance, scale: window?.backingScaleFactor ?? 1) : .zero
+        f.textContainerInset = native ? FieldChromeCache.textareaInset(for: effectiveAppearance, scale: pixelScale ?? 1) : .zero
         let paragraph = NSMutableParagraphStyle()
-        if let height = usedLineHeight {
-            paragraph.minimumLineHeight = height
-            paragraph.maximumLineHeight = height
-            if height == 0 { paragraph.lineHeightMultiple = .leastNormalMagnitude }
-        }
+        if let font = f.font { paragraph.setLineHeight(usedLineHeight, font: font, scale: pixelScale ?? 1) }
         if (f as? TextArea)?.markup == nil { paragraph.baseWritingDirection = fieldBaseDirection }
         // A native one's unsaid alignment is `start`; one of `appearance: none` aligns each paragraph to the
         // base's start (natural) unless the author says otherwise.
@@ -564,7 +561,8 @@ extension NodeView {
         layoutResizeGrip()
     }
     package func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
-        TextInputLimit.allows(textView.string, range: affectedCharRange, replacement: replacementString ?? "", props: props)
+        presenter?.fieldSelections.replacing.contains(id) == true
+            || TextInputLimit.allows(textView.string, range: affectedCharRange, replacement: replacementString ?? "", props: props)
     }
     package func textDidChange(_ notification: Notification) {
         guard let f = textArea else { return }
@@ -685,7 +683,7 @@ final class Field: NSTextField {
     override func accessibilityPerformDecrement() -> Bool { numberOwner?.step(up: false) ?? super.accessibilityPerformDecrement() }
     override class var cellClass: AnyClass? { get { FieldCell.self } set {} }
     override func becomeFirstResponder() -> Bool { focused(delegate) { super.becomeFirstResponder() } }
-    override var focusRingMaskBounds: NSRect { bareFieldMask(self) ?? super.focusRingMaskBounds }
+    override var focusRingMaskBounds: NSRect { uncovered(bareFieldMask(self) ?? super.focusRingMaskBounds) }
     override func drawFocusRingMask() { if !drawBareFieldMask(self) { super.drawFocusRingMask() } }
 }
 /// The editor an `input`'s field edits in (`FieldCell.fieldEditor(for:)`):
@@ -802,7 +800,7 @@ final class SecureField: NSSecureTextField {
     override var acceptsFirstResponder: Bool { currentEditor() == nil && super.acceptsFirstResponder }
     override class var cellClass: AnyClass? { get { SecureFieldCell.self } set {} }
     override func becomeFirstResponder() -> Bool { focused(delegate) { super.becomeFirstResponder() } }
-    override var focusRingMaskBounds: NSRect { bareFieldMask(self) ?? super.focusRingMaskBounds }
+    override var focusRingMaskBounds: NSRect { uncovered(bareFieldMask(self) ?? super.focusRingMaskBounds) }
     override func drawFocusRingMask() { if !drawBareFieldMask(self) { super.drawFocusRingMask() } }
 }
 extension NSTextField {
@@ -850,7 +848,8 @@ private func drawBareFieldMask(_ field: NSTextField) -> Bool {
 private func pressingField(_ owner: Any?, _ event: NSEvent, _ editor: NSView, _ track: () -> Void) {
     guard let node = owner as? NodeView else { return track() }
     if node.pressesUntracked(editor, event) { return }
-    node.tracksPointer(event, track)
+    guard let fields = node.presenter?.fieldSelections else { return node.tracksPointer(event, track) }
+    fields.pressing(node, event) { node.tracksPointer(event, track) }
 }
 /// The field editor selects the whole value as it takes a field, which is
 /// no `select` of the person's; a selection a script set while the field

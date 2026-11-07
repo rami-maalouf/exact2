@@ -7,13 +7,13 @@ final class FrameHealthOverlayMac: NSView {
     weak var health: FrameHealth?
     let card = FrameHealthCardViewMac()
     private let reader = FrameHealthCardReader()
-    /// The corner the card rests in; the window's coordinates rise, so the top is `maxY`
-    private var corner = FrameHealthCardFace.Corner(maxY: true)
+    /// AppKit's coordinates increase upward, so `y: 1` starts at the top
+    private var position = FrameHealthCardFace.Position(y: 1)
+    /// Paused, the card shows what it read at the pause, and goes on measuring
     private var paused = false
-    /// While paused, the request and display the frozen samples were read under
-    private var frozen: (FrameHealthCardText.Rates, FrameHealthCardText.Display)?
-    /// The generation the charts last took frames from
-    private var chartGeneration: UInt64?
+    /// While paused, the request and display the reader was read under; the reader takes no samples while the
+    /// collector goes on measuring, so the first read after it covers the paused span
+    private var frozen: (rates: FrameHealthCardText.Rates, display: FrameHealthCardText.Display)?
     var desiredVisible = false
     /// The session the agent report describes
     weak var session: ExactSession?
@@ -69,8 +69,6 @@ final class FrameHealthOverlayMac: NSView {
 
     deinit { occlusion.map(NotificationCenter.default.removeObserver) }
 
-    /// Sample on each publication. A pause freezes the reader, so the face, accessibility and Share
-    /// all describe the same samples; a drag only defers drawing.
     /// Shown, fitting, and in a window that is on screen and not covered, with no hidden ancestor.
     private var canBeSeen: Bool {
         guard desiredVisible, !card.isHidden, !card.isHiddenOrHasHiddenAncestor, let window else { return false }
@@ -78,12 +76,17 @@ final class FrameHealthOverlayMac: NSView {
     }
     private var occlusion: NSObjectProtocol?
 
+    /// Sample on each publication. A pause keeps what the card shows, so the face, accessibility and Share all describe
+    /// the same samples; a drag only defers drawing.
     func refresh(now: Double = CACurrentMediaTime()) {
         guard let health else { return }
         health.hudEffectiveVisible = canBeSeen
         guard canBeSeen else {
-            // Release the history; the next read after the card shows again is a fresh baseline
-            if reader.reading { reader.stop(); card.clear(); feed(false); card.chart.stop() }
+            // Release the history; the next read after the card shows again is a fresh baseline, unpaused
+            if reader.reading {
+                reader.stop(); card.clear(); health.chart = nil; card.chart.stop()
+                (paused, frozen) = (false, nil)
+            }
             return
         }
         if !reader.reading {
@@ -91,33 +94,23 @@ final class FrameHealthOverlayMac: NSView {
             guard reader.start() else { render(); return }
             card.chart.start()
             reader.sample(health, now: now, force: true)
-            feed(!paused)
+            health.chart = card.chart
+            card.chart.follow(true)
         } else if !paused {
             // A stopped source changes only at lifecycle boundaries, so every one is read
             reader.sample(health, now: now, force: health.snapshot().running == 0)
         }
-        guard card.drag?.moved != true else { return }
+        // Paused, the card shows what it showed
+        guard card.drag?.moved != true, !paused else { return }
         render()
     }
 
-    /// Each frame feeds the charts while the card reads and is not paused; a pause holds them, and
-    /// the first frame after it bounds no interval. A new generation during a pause clears them, as
-    /// the reader's next sample clears it.
-    private func feed(_ on: Bool) {
-        guard let health else { return }
-        let generation = health.snapshot().generation
-        if on, generation != chartGeneration { card.chart.reset() }
-        chartGeneration = generation
-        health.chart = on ? card.chart : nil
-        card.chart.endRun()
-    }
-
     private var rates: FrameHealthCardText.Rates {
-        frozen?.0 ?? FrameHealthCardText.Rates(requestedHz: Double(health?.requestedHertz ?? 0),
+        frozen?.rates ?? FrameHealthCardText.Rates(requestedHz: Double(health?.requestedHertz ?? 0),
             periodMs: Double(reader.samples.last?.periodNs ?? health?.snapshot().period_ns ?? 0) / 1e6)
     }
 
-    private var display: FrameHealthCardText.Display { frozen?.1 ?? Self.display(window?.screen) }
+    private var display: FrameHealthCardText.Display { frozen?.display ?? Self.display(window?.screen) }
 
     private func render() {
         guard let health else { return }
@@ -146,12 +139,14 @@ final class FrameHealthOverlayMac: NSView {
     private func activate(_ control: FrameHealthCardFace.Control) {
         switch control {
         case .status:
+            // Paused, the card keeps what it showed and goes on measuring; resumed, it shows the present, the paused
+            // span included
             frozen = paused ? nil : (rates, display)
             paused.toggle()
-            feed(!paused)
+            card.chart.hold(paused, at: CACurrentMediaTime())
+            if !paused { card.chart.follow(true) }
             NSAccessibility.post(element: card, notification: .announcementRequested,
                 userInfo: [.announcement: paused ? "Paused" : "Resumed"])
-            // Resuming reads at once; the first sample covers the paused span and names it
             if paused { render() } else { refresh() }
         case .close: setVisible(false)
         case .title: card.showDefinitions()
@@ -187,7 +182,8 @@ final class FrameHealthOverlayMac: NSView {
         }
         switch kind {
         case .report: FrameHealthReport.prepare(health: health.reportSource, session: session) { present(String(decoding: $0, as: UTF8.self)) }
-        case .summary: present(FrameHealthCardText.summary(reader: reader, rates: rates, display: display, paused: paused, health: health).text)
+        case .summary: present(FrameHealthCardText.summary(reader: reader, rates: rates, display: display, paused: paused,
+            health: health).text)
         case .image:
             let picture = FrameHealthCardText.picture(reader: reader, chart: card.chart, rates: rates, display: display, paused: paused,
                 health: health, palette: card.palette)
@@ -203,8 +199,8 @@ final class FrameHealthOverlayMac: NSView {
         card.compact = compact
         let size = CGSize(width: min(FrameHealthCardFace.width, available.width), height: height)
         if card.frame.size != size { card.setFrameSize(size); card.needsDisplay = true }
-        // A spring toward a corner the new geometry moved turns toward where it is now
-        let target = corner.origin(of: size, in: available)
+        // Retarget the spring when layout changes its destination
+        let target = position.origin(of: size, in: available)
         if card.drag?.moved == true { place(at: card.frame.origin) }
         else if !snapping { place(at: target) } else if card.frame.origin != target { stopSnap(); spring(velocity: .zero) }
         let wasHidden = card.isHidden
@@ -230,16 +226,15 @@ final class FrameHealthOverlayMac: NSView {
 
     private var snapping: Bool { card.layer?.animation(forKey: "snap.position.x") != nil || card.layer?.animation(forKey: "snap.position.y") != nil }
 
-    /// Spring to the corner nearest where the released card would come to rest.
     private func settle(velocity: CGVector) {
-        corner = FrameHealthCardFace.Corner(nearest: card.frame.origin, velocity: velocity, size: card.frame.size, in: bounds.insetBy(dx: 8, dy: 8))
+        position = FrameHealthCardFace.Position(nearest: card.frame.origin, velocity: velocity, size: card.frame.size, in: bounds.insetBy(dx: 8, dy: 8))
         spring(velocity: velocity)
     }
 
     private func spring(velocity: CGVector) {
         guard let layer = card.layer else { return }
         let from = layer.position
-        place(at: corner.origin(of: card.frame.size, in: bounds.insetBy(dx: 8, dy: 8)))
+        place(at: position.origin(of: card.frame.size, in: bounds.insetBy(dx: 8, dy: 8)))
         let to = layer.position
         for (key, start, end, speed) in [("position.x", from.x, to.x, velocity.dx), ("position.y", from.y, to.y, velocity.dy)] where start != end {
             let spring = CASpringAnimation(keyPath: key)
@@ -252,9 +247,9 @@ final class FrameHealthOverlayMac: NSView {
         }
     }
 
-    /// After a press that did not drag, as a click that stopped the spring, the card returns to its corner.
+    /// Return to the resting position after a click interrupts the spring.
     private func rest() {
-        guard !snapping, card.frame.origin != corner.origin(of: card.frame.size, in: bounds.insetBy(dx: 8, dy: 8)) else { return }
+        guard !snapping, card.frame.origin != position.origin(of: card.frame.size, in: bounds.insetBy(dx: 8, dy: 8)) else { return }
         spring(velocity: .zero)
     }
 
@@ -269,8 +264,8 @@ final class FrameHealthOverlayMac: NSView {
 
     private func move(toward edge: CGVector) -> Bool {
         stopSnap()
-        if edge.dx != 0 { corner.maxX = edge.dx > 0 }
-        if edge.dy != 0 { corner.maxY = edge.dy > 0 }
+        if edge.dx != 0 { position.x = edge.dx > 0 ? 1 : 0 }
+        if edge.dy != 0 { position.y = edge.dy > 0 ? 1 : 0 }
         spring(velocity: .zero)
         return true
     }
@@ -311,8 +306,9 @@ final class FrameHealthCardViewMac: NSView {
         detailsScroll.documentView = detailsView
         addSubview(detailsScroll)
         wantsLayer = true
-        // The drawing fills the bounds; the layer clips it to the card's rounded outline
+        // The drawing fills the bounds; the layer clips it to the card's rounded outline, Apple's continuous curve
         layer?.cornerRadius = 12
+        layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 1
         setAccessibilityElement(true)
@@ -454,7 +450,7 @@ final class FrameHealthCardViewMac: NSView {
         guard let ctx = NSGraphicsContext.current?.cgContext, let palette else { return }
         ctx.setFillColor(palette.background)
         ctx.fill(bounds)
-        FrameHealthCardFace.draw(ctx, width: bounds.width, compact: compact, state: state, palette: palette)
+        FrameHealthCardFace.draw(ctx, .init(width: bounds.width, compact: compact), state: state, palette: palette)
         guard !compact, !state.showsDetails else { return }
         let area = regions.chartArea, p = presentation
         if state.table {
@@ -657,7 +653,8 @@ extension ExactView {
         overlay.setVisible(!health.hudVisible)
     }
     func validateFrameHealthItem(_ item: NSMenuItem) -> Bool {
-        item.title = session.frameHealth.hudVisible ? "Hide Frame Health" : "Show Frame Health"
+        item.title = session.frameHealth.unavailableExplanation == nil ? "Frame Health" : "Frame Health Disabled"
+        item.state = session.frameHealth.hudVisible ? .on : .off
         return session.frameHealth.macContainer != nil
     }
 }

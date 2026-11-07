@@ -71,9 +71,7 @@ package final class Presenter {
     /// Shared elements in flight, by the arriver's id (LLP 1013.000, `FlightsIOS.swift`).
     var flights: [UInt32: Flight] = [:]
     private(set) var chrome = ChromeIndex()
-    func propsChanged(_ view: NodeView) { chrome.note(view.id, props: view.props); DragLink.installed?.updateReorderGesture(view); view.updateRefresh(); view.relook(); view.controlMayHaveChanged() }
-    /// The nodes that were controls when their props last changed (`NodeView.controlMayHaveChanged`)
-    var controlNodes: Set<UInt32> = []
+    func propsChanged(_ view: NodeView) { chrome.note(view.id, props: view.props); DragLink.installed?.updateReorderGesture(view); view.updateRefresh(); view.relook() }
     package func carrying(_ key: String) -> [NodeView] { chrome.ids(key).sorted().compactMap { views[$0] } }
     func takeChangedNames() -> Set<String> { chrome.takeChangedNames() }
     var scrollers: Set<UInt32> = []
@@ -133,6 +131,16 @@ package final class Presenter {
     #endif
     lazy var modals = ModalHost(presenter: self)
     lazy var owners = OwnerBlocks(self)
+    #if os(iOS)
+    private var arrangementHost: AnyObject?
+    @available(iOS 27.1, *)
+    var arrangements: ArrangementHost {
+        if let host = arrangementHost as? ArrangementHost { return host }
+        let host = ArrangementHost(self)
+        arrangementHost = host
+        return host
+    }
+    #endif
     /// What a capability module sees of the viewport and the keyboard's
     /// container (LLP 1047.001 D4): UIKit's types, not the core's.
     package var viewportScroll: UIScrollView { viewport }
@@ -214,7 +222,6 @@ package final class Presenter {
 
     init() {
         viewport.addSubview(root)
-        svg.boxGrey = { [unowned self] id in views[id]?.boxTrackGrey }
         viewport.delegate = scrollPump
         collections.motion = { [unowned self] id in
             if collections.animating.contains(id) { return nil }
@@ -227,6 +234,7 @@ package final class Presenter {
         // Rows a rescue built show this frame: their text paints now, not
         // after the commit, or they show without it (LLP 1050.000 D1).
         collections.rescued = { [unowned self] in paintVisibleText() }
+        textRasters.slotFreed = { [unowned self] in scrollPump.requestText() }
         viewport.keyboardDismissMode = .interactive
         viewport.contentInsetAdjustmentBehavior = .never
         viewport.backgroundColor = .platformBackground(in: root)
@@ -332,6 +340,9 @@ package final class Presenter {
         pool.reset()
         leaves.reset()
         flats.reset()
+        #if os(iOS)
+        if #available(iOS 27.1, *) { arrangements.reset() }
+        #endif
         owners.reset {
             modals.reset()
             navigation.reset(); navigation.rebooting()
@@ -1083,6 +1094,9 @@ package final class Presenter {
         afterBatch { [weak self] in
             guard let self else { return }
             navigation.batchApplied(batch, rowsOnly: rowsOnly)
+            #if os(iOS)
+            if #available(iOS 27.1, *) { arrangements.sync() }
+            #endif
             keyboardToolbars.finishBackendChange()
             for id in scrollers.union(pendingScrolls).union(materialNodes) {
                 guard let node = views[id] else { continue }
@@ -1107,6 +1121,9 @@ package final class Presenter {
     /// parked row, `NodePool`).
     @discardableResult
     func release(_ id: UInt32, _ leaving: (NodeView) -> Void) -> NodeView? {
+        #if os(iOS)
+        if #available(iOS 27.1, *) { arrangements.remove(id) }
+        #endif
         focusEvents.removed(id)
         session?.canvases.destroy(view: id)
         svg.forget(id)
@@ -1119,13 +1136,16 @@ package final class Presenter {
         transformBindings.removeValue(forKey: id)
         transformGeometry.retire(id)
         chrome.forget(id)
-        scrollers.remove(id); pendingScrolls.remove(id); materialNodes.remove(id); contextNodes.remove(id); controlNodes.remove(id)
+        scrollers.remove(id); pendingScrolls.remove(id); materialNodes.remove(id); contextNodes.remove(id)
         return views.removeValue(forKey: id)
     }
 
     /// `parent`'s children, in order: its views as subviews of its container,
     /// then its flat leaves' layers among them (LLP 1068 §6.1).
     func placeChildren(_ parent: NodeView, _ ids: [UInt32]) {
+        #if os(iOS)
+        if #available(iOS 27.1, *) { arrangements.record(parent, children: ids) }
+        #endif
         // Make any views required by this holder before assembling its list.
         for id in flats.place(parent, ids) { flats.promote(id) }
         let container = parent.container
@@ -1142,7 +1162,13 @@ package final class Presenter {
         // view's indicators): inserting a subview at an index moves
         // it when it is already there. One already there stays.
         for child in want where child.superview !== container { placedAnew.append(child.id) }
-        let contained = NodeView.keepingGhosts(want.filter { !navigation.ownsContainment(of: $0, under: parent) && !menus.lifted($0) && !isFlying($0) }, in: container)
+        let heldByArrangement: (NodeView) -> Bool = { node in
+            #if os(iOS)
+            if #available(iOS 27.1, *) { return self.arrangements.owns(node, under: parent) }
+            #endif
+            return false
+        }
+        let contained = NodeView.keepingGhosts(want.filter { !heldByArrangement($0) && !navigation.ownsContainment(of: $0, under: parent) && !menus.lifted($0) && !isFlying($0) }, in: container)
         current = container.subviews
         for (i, child) in contained.enumerated() where !(i < current.count && current[i] === child) {
             // One already here is past `i` (those before it are in place):
@@ -1425,12 +1451,11 @@ package final class Presenter {
         // The root's colour, resolved and compared only when what it is made
         // of changes: every batch asked UIKit for a colour it then compared.
         let first = root.subviews.first as? NodeView
-        // As written, never greyed: the viewport keeps it once the dimming ends (TintDimmingIOS.swift)
-        let key = CanvasKey(root: first.map(ObjectIdentifier.init), channels: first.flatMap { $0.undimmedChannels("background_color", dark: $0.drawsDark) })
+        let key = CanvasKey(root: first.map(ObjectIdentifier.init), channels: first?.channels("background_color"))
         guard key != canvasKey else { return }
         canvasKey = key
         // A root without a background shows the platform's (LLP 1115 D2).
-        let color = first?.undimmedCGColor("background_color").map { UIColor(cgColor: $0) } ?? .platformBackground(in: root)
+        let color = first?.color("background_color", .platformBackground(in: root)) ?? .platformBackground(in: root)
         if viewport.backgroundColor != color { viewport.backgroundColor = color; onCanvasColor?(color) }
     }
     /// An op touched a node (LLP 1014 D4 a): every canvas it is painted
@@ -1455,6 +1480,19 @@ extension CGRect {
     /// The rect inside the given edges (never negative in size).
     func insetBy(left: CGFloat, top: CGFloat, right: CGFloat, bottom: CGFloat) -> CGRect {
         CGRect(x: minX + left, y: minY + top, width: max(0, width - left - right), height: max(0, height - top - bottom))
+    }
+}
+
+extension Presenter {
+    /// The view a view is under in the authored tree, where UIKit holds it elsewhere: a dialog's
+    /// sheet, a lifted popover, a route (any, presented or pushed) and a grouped list's carried row
+    /// to their authored parent; else its superview
+    func authoredParent(of view: UIView) -> UIView? {
+        if let node = view as? NodeView {
+            if let p = menus.sheets.authoredParent(of: node) { return p }
+            if navigation.controllers[node.id]?.node === node, let p = navigation.logicalParent(of: node) ?? navigation.container { return p }
+        }
+        return menus.logicalParent(of: view) ?? groupedLists?.logicalParent(of: view) ?? view.superview
     }
 }
 #endif

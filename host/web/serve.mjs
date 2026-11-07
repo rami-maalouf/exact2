@@ -78,6 +78,17 @@ function staticRelative(name) {
   return name;
 }
 
+/** Read the live module only within its real directory, including through symlinks. */
+export function readModuleFile(entry, pathname) {
+  try {
+    if (!entry || !pathname.startsWith('/modules/')) return null;
+    const name = staticRelative(pathname.slice('/modules/'.length));
+    if (!/^[\w./-]+\.js$/.test(name)) return null;
+    const root = realpathSync(dirname(entry)), path = realpathSync(resolve(root, name));
+    return path.startsWith(root + sep) ? readFileSync(path) : null;
+  } catch { return null; }
+}
+
 // A live iframe can navigate long after its generation left the dev head.
 // Keep those ordinary files outside rebuilt dist, without guessing client
 // liveness. Quota exhaustion refuses publication instead of deleting readers.
@@ -1461,14 +1472,16 @@ export function alsoOnIPv6Loopback(server, port) {
 /** TEST ONLY: a dev loop's wait before it listens, so a test shows its
  * 'plan ready' never comes before the server answers (the gap a loaded
  * machine opened, the agent then navigating to a refused connection).
- * EXACT_DEV_LISTEN_DELAY_MS, read only under EXACT_TEST_TIMING=1, a whole
- * number of ms from 1 to 60000, said on stderr; anything else is ignored. */
-export async function listenDelay(env = process.env) {
+ * EXACT_DEV_LISTEN_DELAY_MS, read only under EXACT_TEST_TIMING=1: a whole number of ms
+ * from 1 to 60000, or `generation`, until `generated` (the first generation) resolves or
+ * 60000 ms pass; said on stderr. Anything else, or `generation` without `generated`, is ignored. */
+export async function listenDelay(env = process.env, generated = null) {
   if (env.EXACT_TEST_TIMING !== '1') return;
-  const said = env.EXACT_DEV_LISTEN_DELAY_MS, ms = /^\d+$/.test(said ?? '') ? Number(said) : NaN;
+  const said = env.EXACT_DEV_LISTEN_DELAY_MS, until = said === 'generation' ? generated : null, ms = until ? 60_000 : /^\d+$/.test(said ?? '') ? Number(said) : NaN;
   if (!(ms >= 1 && ms <= 60_000)) return;
-  console.error(`dev: TEST delay ${ms} ms before listening (EXACT_TEST_TIMING=1)`);
-  await new Promise(ok => setTimeout(ok, ms));
+  console.error(`dev: TEST delay ${until ? 'until the first generation' : `${ms} ms`} before listening (EXACT_TEST_TIMING=1)`);
+  let bound; await Promise.race([new Promise(ok => { bound = setTimeout(ok, ms); }), ...(until ? [until] : [])]);
+  clearTimeout(bound);
 }
 
 /** Whether `port` is free on IPv6's loopback too (no IPv6: yes). */

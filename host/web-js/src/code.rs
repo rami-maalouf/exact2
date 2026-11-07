@@ -35,6 +35,8 @@ pub struct Scope {
     /// The JavaScript object holding the row slots in force (LLP 1017 P4c:
     /// a slot owned by a `for` lives on its row), by slot index.
     pub rows: Option<String>,
+    /// Row slots available in this scope, excluding slots owned by descendants.
+    pub row_slots: BTreeSet<usize>,
 }
 
 /// One region frame's getters.
@@ -48,6 +50,8 @@ pub struct Frame {
 /// Runtime names the generated code uses (for the import lists).
 #[derive(Default)]
 pub struct Uses {
+    /// Resource fields read as Markdown, also prepared before an unopened view mounts.
+    pub markdown_paths: BTreeSet<Vec<usize>>,
     pub names: BTreeSet<String>,
     /// budget.js's (LLP 1090 D3).
     pub budget: BTreeSet<String>,

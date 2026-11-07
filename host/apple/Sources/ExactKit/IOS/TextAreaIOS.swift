@@ -386,7 +386,7 @@ package final class TextArea: UITextView {
         return super.canPerformAction(action, withSender: sender)
     }
     #endif
-    // Keep TextKit's line pitch equal to the authored CSS line box, and the
+    // Keep TextKit's lines the authored CSS line boxes (`setLineHeight`), and the
     // node's `direction` the base (LLP 1001 §1). Updating storage attributes
     // preserves the value and selected range; replacing attributedText would
     // reset a selection (including a read-only one).
@@ -394,13 +394,7 @@ package final class TextArea: UITextView {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = textAlignment
         paragraph.baseWritingDirection = direction
-        if let height {
-            paragraph.minimumLineHeight = height
-            paragraph.maximumLineHeight = height
-            // TextKit's zero min/max mean unconstrained; its smallest positive
-            // multiple produces the explicit zero box at driver precision.
-            if height == 0 { paragraph.lineHeightMultiple = .leastNormalMagnitude }
-        }
+        paragraph.setLineHeight(height, font: font ?? UIFont.systemFont(ofSize: 16))
         let attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: paragraph]
         textStorage.addAttributes(attributes, range: NSRange(location: 0, length: textStorage.length))
         typingAttributes.merge(attributes) { _, authored in authored }
@@ -412,6 +406,11 @@ package final class TextArea: UITextView {
     // decorations' lines are drawn again at each new offset.
     package override var contentOffset: CGPoint {
         didSet { if contentOffset != oldValue, decorations?.drawsLines == true { setNeedsDisplay() } }
+    }
+    /// The placeholder it draws may be in the tint: drawn again as the tint changes
+    package override func tintColorDidChange() {
+        super.tintColorDidChange()
+        if text.isEmpty, !placeholder.isEmpty { setNeedsDisplay() }
     }
     package override func draw(_ rect: CGRect) {
         super.draw(rect)
@@ -452,7 +451,8 @@ extension NodeView {
     }
     // CSS auto leaves UIKit's editor tint alone. An explicit caret colour
     // also colours UIKit's selection handles and highlight.
-    var caretColor: UIColor? { channels("caret_color").map { TextEngine.color($0) } }
+    /// The caret's colour as the field's own tint (`ownTintColor`): nil where it is the tint itself
+    var caretColor: UIColor? { ownTintColor("caret_color") }
 
     // HTML's hints apply to both editors. Email/URL/password input states
     // override author hints; textarea has no input type state or form owner.
@@ -564,7 +564,7 @@ extension NodeView {
         f.font = t.font(size: number("font_size", PageFacts.defaultRootFontSize), weight: Int(number("font_weight", 400)), family: Int(number("font_family")), italic: (style["font_style"]?.string) == "italic", numeric: Int(number("font_variant_numeric")),
             ligatures: Int(number("font_variant_ligatures")), stretch: CGFloat(number("font_stretch", 100)), variations: FontAxis.of(style))
         f.textColor = fieldInk
-        f.tintColor = isNativeTextControl ? caretColor ?? channels("accent_color").map { TextEngine.color($0) } : caretColor
+        f.tintColor = isNativeTextControl ? caretColor ?? ownTintColor("accent_color") : caretColor
         if isNativeTextControl {
             f.typingAttributes[.kern] = number("letter_spacing")
             f.textStorage.addAttribute(.kern, value: number("letter_spacing"), range: NSRange(location: 0, length: f.textStorage.length))

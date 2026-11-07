@@ -1,10 +1,11 @@
+import { markdownText } from './markdown.js';
 import { resourceInspection } from "./resource-inspection.js";
 import { oneActivation, suppressedInvocation, releaseAsset as rel } from "./elements.js"; import { reloadOnGone } from "./generation-reload.js"; import { rt as Link } from "./rt-link.js";
 export { liveTime } from "./live-time.js";
-import { commitGuestOrigin, guestMessageAuthorized, pageGivenFiles, inertAncestor, sheetLeaves, liveById, renderMarkup, reportPlace, onSelection, textField, sourceField, editMenu, settleRadios, installFits, contextAt } from "./navigation.js"; export { animationClocks, launchLocation } from "./navigation.js"; export { fontFamily } from './font-family.js'; // synced animations (LLP 1055.002, emit.rs `clocks`)
-import { Docs, Head, head, markDocument, projectRoots, openTabs, unopened, tp } from "./document.js"; export { Head, unopened, tp }; import { conforms, eq, equal, failureCode, failureReason, loneSurrogate } from "./shape.js"; import { pointer, record } from "./pointer.js"; import { commands } from "./commands.js"; import { autofocus, press } from "./focus.js";
+import { viewChildren, listRow, listItem, syncListItemRoles, listOwner, unwrapListItem, commitGuestOrigin, guestMessageAuthorized, pageGivenFiles, inertAncestor, sheetLeaves, liveById, renderMarkup, reportPlace, onSelection, textField, sourceField, editMenu, settleRadios, installFits, contextAt, navigation } from "./navigation.js"; export { animationClocks, launchLocation } from "./navigation.js"; export { fontFamily } from './font-family.js'; // synced animations (LLP 1055.002, emit.rs `clocks`)
+import { Docs, Head, head, markDocument, projectRoots, openTabs, unopened, tp } from "./document.js"; export { Head, unopened, tp }; export { canSetStatus, statusSubject } from "./document.js"; import { conforms, eq, equal, failureCode, failureReason, loneSurrogate } from "./shape.js"; import { pointer, record } from "./pointer.js"; import { commands } from "./commands.js"; import { autofocus, press } from "./focus.js";
 let Paint; export function usePaint(pass) { Paint = pass; } export { conforms, eq, equal }; // the compiler installs `Paint` only when a plan can layer boxes
-import * as Ov from "./overlay.js"; import { beatAfter } from "./beat.js"; import { counted, heldAsks, heldReplies, longPollReplied, longPollEnded } from "./held.js"; export { heldAsks, heldReplies }; // optimistic writes shown over answers (the runner's writes.rs)
+import * as Ov from "./overlay.js"; import { beatAfter } from "./beat.js"; import { counted, heldAsks, heldReplies, longPollReplied, longPollEnded, trackAnswer } from "./held.js"; export { heldAsks, heldReplies }; export { unfinishedAnswers } from "./held.js"; // optimistic writes shown over answers (the runner's writes.rs)
 const heldOr = (fact, value, apply) => { const x = globalThis.exact; if (!x) return apply(); (x.asked ??= {})[fact] = { value, apply }; if (!x.held?.[fact]) apply(); else x.onAsked?.(); }; // a fact a development page holds over the app's own: kept as asked, applied when not held (LLP 1122 T7, theme2's F2)
 export const writeRecords = () => Ov.Writes.list.map(w => ({ id: w.id, mutation: w.m.name, landed: !!w.landed })); // the agent's `state.writes`
 let Media = null; export function useMedia(m) { Media = m; } // and media.js only where a plan has a `video` or `audio`
@@ -138,8 +139,7 @@ function endAll(rows) {
 // For loaded pieces (list.js): scopes, untracked reads, writes, the owner in
 // force, and a count of what commits changed (an edge's no-op, runner/collection.rs).
 export { scope, end, untracked, write, onEnd };
-export const owner = () => Owner, rev = () => Rev, ticket = () => Ticket, nextTicket = () => ++Ticket;
-// ---------------------------------------------------------------- commits
+export const owner = () => Owner, rev = () => Rev, ticket = () => Ticket, nextTicket = () => ++Ticket, stood = f => Out.push(f), restoring = () => Restoring; // `stood`: run `f` once this commit stands (each.js)
 /** A typed refusal: the commit rolls back (LLP 1005 §6 atomicity). */
 export class Refusal extends Error {}
 /** A data or shape refusal (the runner's `RunnerError::Data` or `Shape`): one in a reply's commit lets its ticket go (`reply`). */
@@ -190,7 +190,7 @@ export function commit(f, what = "commit", finished) {
     ok = false;
     for (const [n, v] of undo.reverse()) write(n, v);
     if (Now.v !== was) { Now.v = was; for (const o of Now.obs) stale(o, DIRTY); } // nor its time: the clock's readers read as they did
-    Resources.forEach((r, k) => r.restore(saved[k])); Mutations.forEach((m, k) => { m.ticket = held[k]; }); Sched?.restore(queued); Ov.restore(writes);
+    Resources.forEach((r, k) => k < saved.length && r.restore(saved[k])); // a resource the commit made (an element's, each.js) has nothing to put back Mutations.forEach((m, k) => { m.ticket = held[k]; }); Sched?.restore(queued); Ov.restore(writes);
     Store.restore(store);
     for (const go of Out) go.refused?.(e?.message ?? e); Out = []; Commands = []; Landed = []; Refused = e; // what would have gone says so (ts-stream.js, ts-data.js)
     say(`refused ${what}: ${e.message}`); Why = why(step, e instanceof Refusal ? e.message : String(e)); // `String`: a TypeError's name too
@@ -214,7 +214,7 @@ export function commit(f, what = "commit", finished) {
     Sched?.scan(true); // a free queue's waiting send is due (LLP 1092 D3)
     return true;
   };
-  return Sh && ok ? Sh.commit(tail, Queue, inflight, After) : tail();
+  return Sh && ok && !navigation.traversing ? Sh.commit(tail, Queue, inflight, After) : tail(); // a history traversal lands at once (navigation.js `traversing`)
 }
 /** A commit made again after a write ended or the source became ready (the runner's `commit_again`). Refused while reads are
  * owed (a reconciling ask), they fail, keeping what they show, before a commit publishes it; a refusal of that leaves nothing owed. */
@@ -275,7 +275,6 @@ function command(name, args, origin) {
   if (Sounds.own.has(name)) return;
   if (Origin.refused?.(name, origin)) return; if (f) f.origin ? f(origin, ...args) : f(...args); else say(`refused: ${name} is not a command this runtime carries`);
 }
-// ---------------------------------------------------------------- the clock and timers
 export const clock = { now: 0, timers: [], agent: false, epoch: 0 };
 // `performanceNow()` is elapsed time: the driver's clock under the agent and in a render, else the
 // page's since it started; a timer commits at its due time. A reader of `performanceNow()` is
@@ -373,7 +372,6 @@ export function paint() {
 let NowRead = false, Parked = -1;
 /** After a commit that wrote: a parked frame loop runs again. */
 function unpark() { if (Parked >= 0 && Rev !== Parked) { Parked = -1; paint(); } }
-// ---------------------------------------------------------------- the data seam
 /** The app's data sources (LLP 1016). `answer(source, args, store)` gives
  * `{v}` now, `{req}` (an HTTP request the host runs, then `parse`s),
  * a Promise (an executor-local continuation: TypeScript), or `null` while
@@ -385,11 +383,12 @@ export const Kept = kind => `exact.${kind}.${DEVELOPMENT_STORE ? `@${DEVELOPMENT
 export const Store = {
   map: new Map(), writes: [], pending: new Map(), dirty: false,
   get(k) { return this.map.get(k); },
+  exclusive(k, work) { return import("./storage-environment.js").then(m => m.exclusiveSecret(this, Kept("secret"), k, work)); },
   // Keeping what is already kept is no write, as the runner's `Store::set`.
   set(k, v) { if (v != null && this.map.get(k) === v) return; if (v == null) this.map.delete(k); else this.map.set(k, v); this.writes.push([k, v]); if (Writes) this.dirty = true; Rev++; if (!Writes && !LateStore) { LateStore = true; queueMicrotask(() => { LateStore = false; Store.persist(); lateReaders(); recommit(lateIdle, "a store write outside a commit"); }); } }, // kept now, whatever that commit's settlement does; the commit asks the store's readers again
   save() { return [new Map(this.map), this.writes.length]; },
   restore([m, n]) { this.map = m; this.writes.length = n; this.dirty = false; },
-  persist() { const p = Kept("secret"); for (const [k, v] of this.writes.splice(0)) this.pending.set(k, { v, warned: false }); for (const [k, entry] of this.pending) try { entry.v == null ? localStorage.removeItem(p + k) : localStorage.setItem(p + k, entry.v); this.pending.delete(k); } catch (e) { if (!entry.warned) { entry.warned = true; say(`store ${k} failed: ${e}`); } } },
+  persist() { const p = Kept("secret"), jobs = []; for (const [k, v] of this.writes.splice(0)) this.pending.set(k, { v, warned: false }); for (const [k, entry] of this.pending) { const live = () => this.pending.get(k) === entry, failed = e => { if (!live()) return; if (!Object.hasOwn(entry, "before")) this.pending.delete(k); if (!entry.warned) { entry.warned = true; say(`store ${k} failed: ${e}`); } }, write = () => { try { const before = localStorage.getItem(p + k); if (Object.hasOwn(entry, "before") && entry.before !== before) { this.pending.delete(k); return; } entry.before = before; entry.v == null ? localStorage.removeItem(p + k) : localStorage.setItem(p + k, entry.v); this.pending.delete(k); } catch (e) { failed(e); } }; if (Object.hasOwn(entry, "before") && !this.leased?.has(k)) { entry.retry ??= import("./storage-environment.js").then(m => m.retrySecretWrite(p + k, live, write)).catch(failed).finally(() => { delete entry.retry; }); jobs.push(entry.retry); } else write(); } return Promise.all(jobs); },
   load() { const p = Kept("secret"); try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith(p)) this.map.set(k.slice(p.length), localStorage.getItem(k)); } } catch {} },
 };
 /** Every resource, in plan order: the checkpoint a render writes reads them. */
@@ -419,7 +418,7 @@ function send(t, land) {
       t.ctl.replied = () => { if (t.waiting) { t.waiting = false; counted(t, inflight); } longPollReplied(t); }; // a long poll's reply of any kind (LLP 1016.000 D8 on D9): out of the clocks' count, held, a reply for `clock held`
       (t.stream ? t.stream(o => done(o, true), t.ctl) : data.fetch(t.req, m => (t.req.longPoll && m.event === 'exact:reply') || done({ streamed: m }, true), t.ctl)).then(done, failed);
     } else if (t.req) data.fetch(t.req).then(done, failed);
-    else t.promise.then(v => done({ v }), e => done({ error: String(e?.message ?? e), code: failureCode(e), reason: failureReason(e) }));
+    else { if (globalThis.__exactRender) trackAnswer(t); t.promise.then(v => done({ v }), e => done({ error: String(e?.message ?? e), code: failureCode(e), reason: failureReason(e) })); }
   });
 }
 /** Open streams: one whose ticket its resource or mutation let go (new arguments, `refresh`, a failure,
@@ -461,7 +460,7 @@ export function res(name, source, args, initial, initialArgs, type, ph, carried 
   const ver = sig(0), pend = sig(false), fail = sig(null);
   const kept = checkpoint().kept?.get(name);
   if (kept) [initialArgs, initial] = kept;
-  const r = { name, source, type, value: initial, settled: initialArgs, baked: kept ? READER.has(source) : !carried && initialArgs !== undefined, ticket: null, forced: false, rev: false, store: false, origin: 0, marks: [], context: args.context ?? 0 }; // `marks`: the uploads it asked, `context`: how many of its last arguments are its `with` context (uploads.js)
+  const r = { name, source, type, value: initial, settled: initialArgs, baked: kept ? READER.has(source) || checkpoint().revalidate : !carried && initialArgs !== undefined, ticket: null, forced: false, rev: false, store: false, origin: 0, marks: [], context: args.context ?? 0 }; // `marks`: the uploads it asked, `context`: how many of its last arguments are its `with` context (uploads.js)
   Inspections.track(r, !kept && !carried, () => pend.n.v);
   const flag = (s, v, undo) => { if (!eq(s.n.v, v)) { undo?.push([s.n, s.n.v]); write(s.n, v); } }, release = () => { if (r.ticket) { say(`forget ticket ${r.ticket.id} (${name})`); r.ticket = null; } flag(pend, false); }, fails = (args, error, code, reason) => { r.failed = args; r.error = error; r.code = code; r.reason = reason; flag(fail, failure()); release(); say(`resource ${name} failed: ${error}`); Inspections.fail(r); return r.value; }, failure = () => r.failed ? [r.failed, r.code ?? "error", r.error ?? "it failed", r.reason ?? ""] : null; // `fail` holds the message too: a `failure(x)` reader is asked again when only it changes
   const hold = () => {
@@ -608,19 +607,18 @@ export function mut(name, slot, refreshes, type, queue) {
   return m;
 }
 export function M(m, source, args, own) { Sends.push([m, source, args, own]); }
-// ---------------------------------------------------------------- the DOM
 const SVG = "http://www.w3.org/2000/svg";
 /** An element under `p`: its static class, attributes and text. */
 export function h(p, tag, cls, attrs, text, ns) {
   if (attrs?.["aria-keyshortcuts"] != null || attrs?.["data-exact-looks"] != null) input(); // (a look snaps by its edges too, LLP 1121 D8)
   if (Adopt) { const e = adopt(p, tag, cls, attrs); if (tag === "video" || tag === "audio") Media.media(e, attrs); if (tag === "iframe") frame(e, attrs?.["data-app-src"]); if (tag === "button") oneActivation(e); return e; }
-  const e = ns ? document.createElementNS(ns, tag) : document.createElement(tag); e.$exactTree = true; e.authoredInert = attrs?.inert !== undefined;
+  const e = ns ? document.createElementNS(ns, tag) : document.createElement(tag), owner = listOwner(p); e.$exactTree = true; e.authoredInert = attrs?.inert !== undefined;
   if (cls !== 0) e.setAttribute("class", "c" + cls); // `bits`, below: the paint facts the compiler wrote, kept as paint.js `facts` reads them rather than read back from the attribute names; a bound fact's `P` clears them (LLP 1071.001 A6)
   let bits = 0; if (attrs) { for (const k in attrs) if (NOT_DOM.test(k)) e["$" + k] = attrs[k]; else { e.setAttribute(k, rel(k, attrs[k])); if (k === "data-exact-f" || k.startsWith("data-exact-f-")) bits |= Number(attrs[k]); } if ("data-scrolldocument" in attrs) Docs.add(e); if (tag === "img" && ("data-symbol-source" in attrs || "data-app-src" in attrs)) Hooks.image?.(e); } if (Paint) e.$paintFacts = bits;
   if (text !== 0) e.textContent = text;
   if (tag === "iframe") frame(e, attrs?.["data-app-src"]);
   if (tag === "button") oneActivation(e);
-  p.append(e);
+  p.append(owner ? listItem(e, owner) : e);
   if (tag === "video" || tag === "audio") Media.media(e, attrs); // an `audio` is the same media host (LLP 1042 §8)
   Paint?.list(e); return e;
 }
@@ -634,12 +632,8 @@ export function cv(e) {
   s.style.cssText = "position:absolute;inset:0;width:100%;height:100%;display:block;z-index:-1";
   if (Adopt) e.insertBefore(s, at(e)); else e.append(s);
 }
-// A page rendered ahead (by the Rust render host or by this runtime under
-// Bun) is adopted, not rebuilt: construction walks the document with a
-// cursor per parent, takes each element whose tag matches, gives it the
-// class it would have had and drops the renderer's view ids, and inserts
-// the region anchors a fresh build would have made. A
-// mismatch abandons adoption and builds afresh (LLP 1048.000 D6).
+// Adopt with a cursor per parent: match tags, restore classes and region anchors, and drop renderer view ids.
+// A mismatch abandons adoption and builds afresh (LLP 1048.000 D6).
 let Adopt = false, AdoptedLists = new Set(); // the parents whose rows a keyed list adopted: one holding rows past the list's (a page built ahead, opened at a query it was not built at) is no projection of this plan either (`mount`)
 class Mismatch extends Refusal {}
 // The next node to adopt under `p`; insertions go before it and never move it.
@@ -647,8 +641,9 @@ const at = p => (p.$n === undefined ? (p.$n = p.firstChild) : p.$n);
 function adopt(p, tag, cls, attrs) {
   let e = at(p);
   while (e && e.nodeType !== 1) e = e.nextSibling;
+  const shell = e; if (e?.hasAttribute("data-exact-list-item")) e = listRow(e);
   if (!e || e.localName.toLowerCase() !== tag.toLowerCase()) throw new Mismatch(`adoption: expected <${tag}>, found ${e ? "<" + e.localName + ">" : "nothing"}`);
-  p.$n = e.nextSibling; e.$exactTree = true; e.authoredInert = attrs?.inert !== undefined;
+  p.$n = shell.nextSibling; e.$exactTree = true; e.authoredInert = attrs?.inert !== undefined;
   e.$paintWaiting = false; e.$paintFacts = null; e.removeAttribute("data-exact-paint");
   // Inline rows stay, except spinner alignment: its class follows the live parent.
   if (attrs?.["data-exact-progress"] !== undefined) e.style.removeProperty("justify-self");
@@ -703,45 +698,23 @@ export function P(e, name, f) {
     else if (BOOL.test(name)) { if (name === "inert") e.authoredInert = v === "true"; e.toggleAttribute(name, v === "true"); if (name === "disabled" && v === "true" && document.activeElement === e && e.matches(":disabled")) e.blur(); /* HTML focus fixup, now, for a control only (glue.js) */ if (name === "checked") e.checked = e.$checked = v === "true"; if (name === "muted") e.muted = v === "true"; if (name === "autofocus") { if (v === "true") e.removeAttribute("data-autofocus"); else e.setAttribute("data-autofocus", "false"); } }
     else if (v == null) { if (e.hasAttribute(name) || suppressedInvocation(e, name)) { e.removeAttribute(name); if (name.startsWith("data-exact-")) Paint?.facts(e); } }
     else if (e.getAttribute(name) !== v) { e.setAttribute(name, v); if (name.startsWith("data-exact-")) Paint?.facts(e); }
+    if (name === "role") syncListItemRoles(e); else if (name === "popover" && e.parentElement?.hasAttribute("data-exact-list-item")) listItem(e);
     if (e.localName === "a" && (name === "target" || name === "href" && (!e.hasAttribute("target") || e.rel === "external noopener"))) { const out = name === "href" && v != null && /^\s*(https?:)?\/\//i.test(v), t = name === "target" ? v : out ? "_blank" : null; if (t) e.setAttribute("target", t); else e.removeAttribute("target"); if (t === "_blank") e.rel = out ? "external noopener" : "noopener"; else e.removeAttribute("rel"); } // a link to an absolute URL leaves the app in a new browsing context unless its `target` is authored (element.rs `leaves_app`, `props_of`; chat F11)
     if (name === "sandbox" && e.localName === "iframe" && !e.exactAppFrame) { const source = e.$src ?? e.getAttribute("src"); if (source != null) { const s = navigable(source, e) ? source : "about:blank"; if (sandboxChanged || e.getAttribute("src") !== s) e.setAttribute("src", s); } } // a new sandbox takes effect on navigation, even to the same source; a literal source stays in src, a refused `data:` source in $src
     if ((name === 'src' || name === 'sandbox') && e.localName === 'iframe') commitGuestOrigin(e);
   });
 }
-/** A `markup="markdown"` text (LLP 1045 D3): its source as pieces, built
- * into spans by the web host's own `renderMarkup`; the pieces come from the
- * web host's Markdown, a wasm fetched at the first such node (a loaded
- * capability). A rendered page's spans stand until the source changes. */
-let Markdown = null, Atoms = null;
-export function md(e, f) {
-  let first = Adopt && e.childElementCount > 0 && !e.querySelector("[data-exact-atom]"); // a page rendered at build is drawn again where it has atoms, which it renders as their labels
-  // Its inline atoms (LLP 1045.000 D6): the kinds and faces are attributes, read at each render and followed as they change; a press on one is the node's `atompress`.
-  const render = v => { inflight.n++; Promise.all([Markdown ??= markdown(), e.hasAttribute("data-atoms") && (Atoms ??= import("./atoms.js"))]).then(([pieces]) => { if (e.$source === v) renderMarkup(e, pieces(v, e.getAttribute("data-atoms") ?? "", e.getAttribute("data-atom-faces") ?? "")); }).finally(() => inflight.n--); };
-  if (typeof MutationObserver === "function") new MutationObserver(() => render(e.$source)).observe(e, { attributes: true, attributeFilter: ["data-atoms", "data-atom-faces", "data-atom-styles"] }); effect(() => {
-    const v = f() ?? "";
-    e.$source = v;
-    if (first) { first = false; return; }
-    if (!Markdown) e.textContent = v;
-    render(v);
-  });
-}
-async function markdown() {
-  const bytes = globalThis.__files ? globalThis.__files("markdown.wasm") : await fetch("./markdown.wasm").then(r => r.arrayBuffer());
-  const made = await WebAssembly.instantiate(bytes, {}), x = (made.instance ?? made).exports;
-  return (source, atoms, faces) => {
-    const enc = new TextEncoder(), s = enc.encode(source), a = enc.encode(atoms), f = enc.encode(faces), b = new Uint8Array(s.length + a.length + f.length), p = x.alloc(b.length);
-    b.set(s); b.set(a, s.length); b.set(f, s.length + a.length);
-    new Uint8Array(x.memory.buffer, p, b.length).set(b);
-    const n = x.pieces(p, b.length, a.length, f.length);
-    return new TextDecoder().decode(new Uint8Array(x.memory.buffer, x.output(), n));
-  };
-}
+/** A reader uses built pieces; new text loads the parser on demand. */
+export function md(e, f, prepared) { markdownText(e, f, prepared, { effect, inflight, adopting, renderMarkup }); }
 /** Views by id, one id space for the agent and the GPU module (the web
  * host's `exact.views`): an element gets an id when either first asks. */
 export const Views = new Map();
 const Ids = new WeakMap();
 let NextView = 1;
-export function viewId(e) { let i = Ids.get(e); if (!i) { i = NextView++; Ids.set(e, i); } Views.set(i, e); return i; }
+const forgetView = e => { const i = Ids.get(e); if (!e.isConnected && Views.get(i) === e) Views.delete(i); };
+let ViewObserver = null;
+export function viewId(e) { let i = Ids.get(e); if (!i) { i = NextView++; Ids.set(e, i); } if (!Views.has(i)) onEnd(() => queueMicrotask(() => forgetView(e))); Views.set(i, e); watchViews(); return i; }
+function watchViews() { if (ViewObserver || typeof MutationObserver !== "function") return; ViewObserver = new MutationObserver(records => { for (const r of records) for (const e of r.removedNodes) { forgetView(e); for (const child of e.querySelectorAll?.("*") ?? []) forgetView(child); } }); ViewObserver.observe(document.documentElement, { childList: true, subtree: true }); }
 /** A canvas's surface (LLP 1009 D2): its inputs, evaluated as the runner
  * evaluates them (records as arrays), to the app's GPU module — the web
  * host's own `gpu-glue.js` over `gpu.js`, fetched after the first painted
@@ -955,7 +928,7 @@ export const onFocus = (e, kind, f, l) => { const own = Owner, run = () => e.isC
 export const onClipboard = (e, kind, f, l) => { if (kind === "paste") OnHooks.pasteWarm?.(); return l(kind, atBody(e, kind, ev => { ev.stopPropagation(); const outer = KeyEvent; KeyEvent = ev; try { f([ev.clipboardData?.getData("text/plain") ?? "", kind === "paste" ? OnHooks.pasted?.(ev) ?? [] : []]); } finally { KeyEvent = outer; } })); };
 export const onToggle = (e, kind, f, l) => l(kind, ev => f([ev.oldState, ev.newState])); export const onFrameCapture = (e, kind, f, l) => l("exactcapture", ev => f(["path", "width", "height", "error", "message"].map(k => ev.detail[k]))); /* a capture's `FrameCapture`, always the refusal (frame-navigation.js, LLP 1020.002 D7) */ export const onFrameNavigation = (e, kind, f) => { inflight.n++; import("./frame-navigation.js").then(m => m.watch(e, (name, r) => { if (name === kind) f(m.positional(r)); })).finally(() => inflight.n--); }; // an iframe's navigation records, the subset a page sees (frame-navigation.js, LLP 1020.002 D2)
 export const onAtompress = (e, kind, f, l) => l(kind, ev => { if (Array.isArray(ev.detail)) f(ev.detail); }); // a press on an inline atom (LLP 1045.000 D7), its `AtomEvent` record the event's detail (atoms.js, markup-editor.js)
-export const onSelectionChange = (e, kind, f, l) => { return sourceField(e) ? l(kind, () => f(inputRecord(e, e.value, false))) : onSelection(e, (text, a, b, rects) => f([text, a, b, rects])); };
+export const onSelectionChange = (e, kind, f, l) => { return sourceField(e) ? l(kind, () => f(inputRecord(e, e.value, false))) : onEnd(onSelection(e, (text, a, b, rects) => f([text, a, b, rects]))); };
 // ---------------------------------------------------------------- presence (LLP 1063)
 // `-exact-exit-animation` and `-exact-layout-transition`: the web host's own presence-glue.js, fetched after the first
 // painted frame by a plan with either row (its node calls `pr`; a bound layout transition's, `lt`), plays both. Each commit it
@@ -1171,9 +1144,10 @@ function range(p) {
 // A view leaving with its exit animation stays where it was until it ends
 // (presence-glue.js removes it): never moved, since moving cancels a CSS animation.
 const exiting = n => n.nodeType === 1 && n.hasAttribute("data-exiting");
-function clear(a, b) { Paint?.list(a.parentNode); for (let n = a.nextSibling; n !== b;) { const m = n.nextSibling; if (!exiting(n)) Leave ? Leave(n, b) : sheetLeaves(n) || n.remove(); n = m; } }
+function leave(n) { const shell = n.nodeType === 1 && n.hasAttribute("data-exact-list-item") ? n : null; n = shell ? listRow(shell) : n; if (n && !exiting(n)) Leave ? Leave(n) : sheetLeaves(n) || n.remove(); if (shell?.parentNode) unwrapListItem(shell); }
+function clear(a, b) { Paint?.list(a.parentNode); for (let n = a.nextSibling; n !== b;) { const m = n.nextSibling; leave(n); n = m; } }
 function build(b, f, own) {
-  const frag = document.createDocumentFragment();
+  const frag = document.createDocumentFragment(); frag.$listOwner = listOwner(b.parentNode);
   const s = scope(() => f(frag), own);
   b.before(frag); Paint?.list(b.parentNode);
   return s;
@@ -1267,7 +1241,7 @@ export function each(p, list, key, row, pure) {
         }
         else {
           r = { item: sig(item), index: sig(i) };
-          const frag = document.createDocumentFragment();
+          const frag = document.createDocumentFragment(); frag.$listOwner = listOwner(parent);
           r.s = scope(() => row(frag, r.item, r.index), own);
           // A row of one element is that element (a region at its top would
           // have put its own anchors beside it); any other is bracketed.
@@ -1280,12 +1254,12 @@ export function each(p, list, key, row, pure) {
       const list = order = [...next.values()];
       for (let i = 0; i < list.length; i++) list[i].at = i;
       // Every row goes and the region is all its parent holds: emptied at once.
-      if (rows.size && b && !Leave && list.every(r => r.frag) && !a.previousSibling && !b.nextSibling && !parent.querySelector(':scope > [navigationPresentation="modal"]')) { // not where the parent holds a modal route, which may leave (navigation.js `sheetLeaves`)
+      if (rows.size && b && !Leave && list.every(r => r.frag) && !a.previousSibling && !b.nextSibling && !viewChildren(parent).some(r => r.getAttribute("navigationPresentation") === "modal")) { // not where the parent holds a modal route, which may leave (navigation.js `sheetLeaves`)
         endAll(rows);
         parent.textContent = "";
         parent.append(a, b);
       }
-      else if (rows.size) { endAll(rows); for (const r of rows.values()) { let n = r.start; while (n) { const m = n.nextSibling; Leave ? Leave(n, b) : sheetLeaves(n) || n.remove(); if (n === r.end) break; n = m; } } }
+      else if (rows.size) { endAll(rows); for (const r of rows.values()) { let n = r.start; while (n) { const m = n.nextSibling; leave(n); if (n === r.end) break; n = m; } } }
       // Order, from the last row back: kept rows on the longest run already in
       // order stay; any other moves before the row after it; new rows go in
       // one fragment per run.
@@ -1354,7 +1328,7 @@ function adoptLazy(x) {
     if (!(e instanceof Mismatch)) throw e;
     say(`each: a row built afresh: ${e.message}`);
     Adopt = false;
-    const frag = document.createDocumentFragment(), old = r.start;
+    const frag = document.createDocumentFragment(), old = r.start; frag.$listOwner = listOwner(p);
     r.s = scope(() => row(frag, r.item, r.index), own);
     if (frag.childNodes.length === 1 && frag.firstChild.nodeType === 1) r.start = r.end = frag.firstChild;
     else { r.start = document.createComment(""); r.end = document.createComment(""); frag.prepend(r.start); frag.append(r.end); }
@@ -1440,7 +1414,7 @@ export function checkpoint() {
   Checkpoint = { kept: null };
   const el = typeof document !== "undefined" && document.querySelector('script[type="application/vnd.exact.checkpoint"]');
   if (!el) return Checkpoint;
-  const cp = JSON.parse(el.textContent);
+  const cp = JSON.parse(el.textContent); Checkpoint.revalidate = !!cp.revalidate;
   Checkpoint.kept = new Map(cp.answers.map(([name, , args, value]) => [name, [value_(args), value_(value)]]));
   // A drive starts at zero even when its document was rendered on a wall clock.
   const driven = AGENT_ADMITTED && typeof location !== "undefined" && new URLSearchParams(location.search).has("agent") && !globalThis.__exactRender;
@@ -1496,4 +1470,4 @@ export function language(slot) {
 }
 export * from "./router.js"; import { routerValid } from "./router.js"; // the router (LLP 1038), its own file
 export { queues, gated } from "./schedule.js"; // queued sends and gated tasks (LLP 1092), their own file
-export { timerWaits } from "./timer-waits.js";
+export { timerWaits } from "./timer-waits.js"; export { resEach } from "./each.js";

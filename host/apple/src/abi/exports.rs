@@ -90,6 +90,14 @@ macro_rules! host {
             $crate::abi::with_runtime(&EXACT_RUNTIMES, rt, false, |b, hooks| b.control_text_changed(hooks), |n| n)
         }
 
+        /// The text engine rounds line boxes to another scale (LLP 1008 §3,
+        /// a Mac window on a display of another backing scale): every
+        /// paragraph is measured again.
+        #[no_mangle]
+        pub extern "C" fn exact_text_scale_changed(rt: u32) -> u32 {
+            $crate::abi::with_runtime(&EXACT_RUNTIMES, rt, false, |b, _| b.text_scale_changed(), |n| n)
+        }
+
         /// A paragraph's line boxes (LLP 1093 D6), called with the context
         /// `exact_set_measure` was given; `None` keeps paragraphs whole in a
         /// multi-column flow.
@@ -774,12 +782,6 @@ macro_rules! host {
         #[no_mangle]
         pub extern "C" fn exact_set_root_font_size(rt: u32, px: f64) -> u32 {
             $crate::abi::with_runtime(&EXACT_RUNTIMES, rt, false, |b, _| b.set_root_font_size(px), |n| n)
-        }
-
-        /// The host's zoom over the root size (the Mac's View ▸ Zoom In).
-        #[no_mangle]
-        pub extern "C" fn exact_set_root_font_zoom(rt: u32, factor: f64) -> u32 {
-            $crate::abi::with_runtime(&EXACT_RUNTIMES, rt, false, |b, _| b.set_root_font_zoom(factor), |n| n)
         }
 
         /// Whether a confirmation's rows are an alert's (LLP 1115 D6): 1 for

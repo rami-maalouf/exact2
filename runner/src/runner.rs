@@ -81,6 +81,7 @@ pub use device_links::{AuthLinks, DeviceLinks, PickerLinks};
 pub mod picker;
 pub use picker::{Picked, PickerRequest, PICKED};
 mod dated;
+mod each;
 mod fragments;
 mod gates;
 mod waits;
@@ -261,6 +262,8 @@ struct PendingReq {
     module_again: Option<u64>,
     /// May change its server ([`crate::Request::has_effects`]): kept when let go (LLP 1146 D2).
     effects: bool,
+    /// An earlier round may have changed its server; the answer cannot be replayed.
+    replay_unsafe: bool,
     /// The sequence when its answer was first asked; its later rounds keep
     /// it. Only an answer asked after a write landed retires that write.
     origin: u64,
@@ -337,6 +340,8 @@ pub struct Runner<D: DataSource> {
     derives: Vec<Option<Value>>,
     resources: Vec<Option<ResourceState>>,
     resource_values: Vec<Option<crate::held::Held>>,
+    /// The elements' requests of resources over lists, as rows after the plan's.
+    members: each::Members,
     tree: Option<Tree>,
     reorder_owner: Option<exact_kernel::NodeKey>,
     reorder_ops: Vec<exact_kernel::Op>,
@@ -785,6 +790,7 @@ impl<D: DataSource> Runner<D> {
             derives: Vec::new(),
             resources: Vec::new(),
             resource_values: Vec::new(),
+            members: Default::default(),
             tree: None,
             reorder_owner: None,
             reorder_ops: Vec::new(),
@@ -1198,6 +1204,10 @@ impl<D: DataSource> Runner<D> {
     /// (LLP 1035.002 D6). `None` for a view the instance tree does not own.
     pub fn site_of(&self, view: ViewId) -> Option<(NodesId, Vec<InstanceStep>)> {
         self.tree.as_ref().and_then(|t| t.site(view))
+    }
+
+    pub(crate) fn plan_site_of(&self, view: ViewId) -> Option<NodesId> {
+        self.ids.site(view)
     }
 
     /// The event kinds a view handles, for a host that attaches listeners.

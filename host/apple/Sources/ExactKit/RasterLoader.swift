@@ -252,11 +252,13 @@ private final class RasterBackend: @unchecked Sendable {
             input = try fetched?.get() ?? RasterInput.open(source.name, resolver: resolver, cancellation: cancellation)
             metadata = try input!.metadata()
         } catch {
+            // A body that came with a status that is not 2xx and is not an image fails as that status.
+            let error = input?.failure(error) ?? error
             // (A link the reason quotes loses its query: a CDN's signature.)
             failure = RasterRetry.redacted(error is RasterFailure || error is RasterHTTPStatus || error is RasterEmptyResponse
                 ? String(describing: error) : error.localizedDescription, source: source.name)
-            // A download's only: a header that fails to read fails again.
-            if RasterInput.remote(source.name) != nil, input == nil, RasterRetry.transient(error) {
+            // A download's failure, or its status's: a header that fails to read fails again.
+            if RasterInput.remote(source.name) != nil, input == nil || error is RasterHTTPStatus, RasterRetry.transient(error) {
                 transient = (error as? RasterHTTPStatus)?.retryAfter ?? .now()
             }
         }
@@ -779,7 +781,7 @@ final class RasterLoader {
     /// The view's device pixels per point.
     private static func displayScale(_ view: NodeView) -> CGFloat {
         #if os(macOS)
-        return view.window?.backingScaleFactor ?? 1
+        return view.pixelScale ?? 1
         #else
         return view.traitCollection.displayScale
         #endif
@@ -803,7 +805,7 @@ final class RasterLoader {
     /// for the size it paints. Before the metadata, the box's longest side.
     private func requestedPixel(_ view: NodeView, _ metadata: RasterMetadata?) -> Int {
         #if os(macOS)
-        let scale = view.window?.backingScaleFactor ?? 1
+        let scale = view.pixelScale ?? 1
         #else
         let scale = view.traitCollection.displayScale
         #endif

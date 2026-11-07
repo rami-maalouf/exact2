@@ -5,10 +5,12 @@
 // keeps keys as the web host does (LLP 1069.005 D1b: the pair itself in
 // IndexedDB under a handle the store holds; its code is fetched on first
 // use); `openAuthSession` is auth.js.
+// The runtime's bindings load before the app's module and what it imports, so ts-fetch.js takes the page's own
+// functions before any app code runs.
+import { activeCall, answering, dropTimers, files as bodyFiles, SOCKET_AND_FETCH } from './ts-fetch.js';
 import * as source from '__APP_TS__';
 import { createSecretFacade, hasGrant, inOverlay, overlaying, setAppGrantSet } from './admission.js';
 import { tsGrantSet } from './admission-data.js';
-import { answering, dropTimers, files as bodyFiles, SOCKET_AND_FETCH } from './ts-fetch.js';
 import { sourceTypes } from './names.js';
 import { checkpoint, clock, commit, drive, inflight, journal, Origin, painted, R, Resources } from './rt.js';
 import { Shaped } from './shape.js';
@@ -26,10 +28,12 @@ __AUTH_IMPORT__
 // record or list that converts to what it did is that array itself, so the
 // runtime compares and shape-checks an unchanged row as an identity (the Rust
 // runner keeps an equal answer's old object and re-checks only the list items
-// that are new, runner/src/conform.rs).
+// that are new, runner/src/conform.rs). A frozen data tree keeps its converted
+// value when paging moves it to a different array index.
 const same = (a, b) => a === b ? a !== 0 || 1 / a === 1 / b : a !== a && b !== b;
 const LEAF = [v => v == null ? null : v, v => v == null ? null : v, true];
 const made = new WeakMap();
+const frozenTrees = new WeakSet();
 function converters(t) {
   if (!t || typeof t === 'string') return LEAF;
   let c = made.get(t);
@@ -53,7 +57,7 @@ function converters(t) {
       }
       return out ?? o;
     };
-    return c;
+    return cacheFrozenConversion(c);
   }
   const k = Object.keys(t), n = k.length, subs = k.map(f => converters(t[f]));
   const leaves = subs.map(s => s[2] === true);
@@ -75,7 +79,52 @@ function converters(t) {
     }
     return out ?? o;
   };
-  return c;
+  return cacheFrozenConversion(c);
+}
+function cacheFrozenConversion(converter) {
+  const convert = converter[1], converted = new WeakMap();
+  converter[1] = (value, previous) => {
+    if (value === null || typeof value !== 'object' || !isFrozenData(value)) {
+      return convert(value, previous);
+    }
+    if (converted.has(value)) { return converted.get(value); }
+    const result = convert(value, previous);
+    converted.set(value, result);
+    return result;
+  };
+  return converter;
+}
+// Recheck prototypes because freezing data leaves inherited serialization mutable
+function isFrozenData(value) {
+  if (Object.hasOwn(Object.prototype, 'toJSON') || Object.hasOwn(Array.prototype, 'toJSON')
+      || Object.getPrototypeOf(Array.prototype) !== Object.prototype) {
+    return false;
+  }
+  return isFrozenTree(value, new WeakSet());
+}
+function isFrozenTree(value, visiting) {
+  if (value === null || typeof value !== 'object') { return typeof value !== 'function'; }
+  if (frozenTrees.has(value)) { return true; }
+  const prototype = Object.getPrototypeOf(value);
+  if (!Object.isFrozen(value) || (prototype !== null && prototype !== Object.prototype && prototype !== Array.prototype)
+      || visiting.has(value)) {
+    return false;
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  // Reject holes because frozen arrays can still read mutable inherited elements
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if (!Object.hasOwn(descriptors, i)) { return false; }
+    }
+  }
+  visiting.add(value);
+  try {
+    for (const descriptor of Object.values(descriptors)) {
+      if (!Object.hasOwn(descriptor, 'value') || !isFrozenTree(descriptor.value, visiting)) { return false; }
+    }
+  } finally { visiting.delete(value); }
+  frozenTrees.add(value);
+  return true;
 }
 // An answer is checked as Hermes checks it (js/value's `decode_tree`, over
 // the prelude's `JSON.stringify`): each declared field present, none
@@ -99,7 +148,7 @@ function outside(v, t) {
   if (Array.isArray(t) && t[0] === '?') return v === null ? null : outside(v, t[1]);
   if (Array.isArray(t)) {
     if (!Array.isArray(v)) return `expected an array, got ${kind(v)}`;
-    for (const x of v) { const e = outside(x, t[1]); if (e) return e; }
+    for (let i = 0; i < v.length; i++) { const e = outside(v[i], t[1]); if (e) return e; }
     return null;
   }
   if (v === null || typeof v !== 'object' || Array.isArray(v)) return `expected an object, got ${kind(v)}`;
@@ -112,6 +161,7 @@ function outside(v, t) {
   for (const key of Object.keys(v)) if (!Object.hasOwn(t, key) && !omitted(v[key]) && (extra === null || key < extra)) extra = key;
   return extra === null ? null : `field \`${extra}\` is not in the shape`;
 }
+// Revalidate every answer: freezing a proxy does not freeze its serialization behavior
 const checked = (name, v, t) => {
   const e = outside(v, t);
   if (e) throw Object.assign(new Error(`\`${name}\` answered outside its shape: ${e}`), { kind: 'Unavailable', [Shaped]: true });
@@ -149,11 +199,13 @@ const moduleWatched = new Map(); // module key -> sources
 // Whether the answer that made the call still wants its reply is its call's `wanted`, its ticket's `held` (rt.js
 // `reply`), which a registration's reply reads (LLP 1133.011 D11).
 globalThis.__exact_module = body => {
-  const key = `${body.extension}.${body.source}`, call = answering.call;
+  const key = `${body.extension}.${body.source}`, call = activeCall(), before = answering.call;
   if (body.source && watching) (moduleWatched.get(key) ?? moduleWatched.set(key, new Set()).get(key)).add(watching);
-  // A tool handler's call carries its origin (`data.tool`); every other is the app's.
+  // A continuation keeps the least privileged pending call until its answer settles.
   const origin = call?.origin ?? 'app';
-  return ordinary(() => globalThis.exact?.extensions?.call?.({ ...body, origin }, () => call?.wanted?.() ?? true) ?? Promise.resolve({ error: 'NotSupportedError' }));
+  answering.call = call;
+  try { return ordinary(() => globalThis.exact?.extensions?.call?.({ ...body, origin }, () => call?.wanted?.() ?? true) ?? Promise.resolve({ error: 'NotSupportedError' })); }
+  finally { answering.call = before; }
 };
 (globalThis.exact ??= {}).announceModule = topic => announce(topic, 'module');
 globalThis.exact.moduleReaders = key => Resources.filter(r => moduleWatched.get(key)?.has(r.source)).map(r => r.name);
@@ -417,7 +469,7 @@ export function install(data, mixed = false, modules = null) {
   };
   const answerWith = (name, args, target, mutation, types, params, result, seen) => {
     // A kept key's work is counted on its answer as an ordinary fetch is (LLP 1016.000 D9).
-    for (const name of ['key', 'keepKey']) { const op = seen[name]; seen[name] = (...a) => ordinary(() => op(...a)); }
+    for (const name of ['key', 'keepKey', 'exclusive']) { const op = seen[name]; seen[name] = (...a) => ordinary(() => op(...a)); }
     asking = target ?? name; watching = name;
     for (const sources of moduleWatched.values()) sources.delete(name);
     // The origin of the commit that asked it (LLP 1133.002 D12), which a fetch it makes carries (LLP 1133.036 D6).
@@ -479,12 +531,15 @@ export function install(data, mixed = false, modules = null) {
   data.tool = (name, args, store, origin) => {
     const handler = source.tools?.[name];
     if (typeof handler !== 'function') return null;
-    const call = answering.call = { stream: null, mutation: true, name, turn: true, origin };
+    const before = answering.call, call = answering.call = { stream: null, mutation: true, name, turn: true, origin };
+    if (origin !== 'app') answering.untraced.add(call);
+    const settle = () => { call.settled = true; dropTimers(call); answering.untraced.delete(call); };
     asking = name;
     let r;
     try { r = handler(args, createSecretFacade(store, tsGrantSet, kept), storage); }
-    finally { call.turn = false; asking = ''; answering.call = null; }
-    return Promise.resolve(r).finally(() => { call.settled = true; dropTimers(call); });
+    catch (error) { settle(); throw error; }
+    finally { call.turn = false; asking = ''; answering.call = before; }
+    return Promise.resolve(r).finally(settle);
   };
   // A resource's source that sent and then threw: what it sent, which rt.js `ask` queues with the commit.
   data.thrown = () => { const t = thrown ?? []; thrown = null; return t; };

@@ -87,7 +87,7 @@ final class IframeGivenFilesTests: XCTestCase {
               type: whole.headers.get('content-type'), sandbox: [whole, part, head].map(r => r.headers.get('content-security-policy')),
               odd: await Promise.all(rest.map(async f => (await (await fetch(f)).arrayBuffer()).byteLength)),
               empty: await fetch(empty).then(async r => [r.status, (await r.arrayBuffer()).byteLength]),
-              ranges: [await range('bytes=-3'), await range('bytes=7-'), await range('bytes=99-'), await range('bytes=0-1,4-5'), await range('bytes=x')],
+              ranges: [await range('bytes=-3'), await range('bytes=-11'), await range('bytes=-9223372036854775807'), await range('bytes=7-'), await range('bytes=99-'), await range('bytes=0-1,4-5'), await range('bytes=x')],
               post: await fetch(big, { method: 'POST', body: 'x' }).then(r => r.status, () => 'refused') });
             """)
         XCTAssertTrue((read["big"] as? String)?.hasPrefix("exact-app://app/.exact/files/") == true, "\(read)")
@@ -104,7 +104,7 @@ final class IframeGivenFilesTests: XCTestCase {
         XCTAssertEqual(read["odd"] as? [Int], Self.odd.map { Data($0.utf8).count }, "names a URL would split, encoded")
         XCTAssertEqual(read["empty"] as? [Int], [200, 0])
         let ranges = try XCTUnwrap(read["ranges"] as? [[Any]]).map { "\($0[0]) \($0[1])" }
-        XCTAssertEqual(ranges, ["206 789", "206 789", "200 0123456789", "200 0123456789", "200 0123456789"])
+        XCTAssertEqual(ranges, ["206 789", "206 0123456789", "206 0123456789", "206 789", "200 0123456789", "200 0123456789", "200 0123456789"])
         XCTAssertEqual(read["post"] as? Int, 405)
     }
 
@@ -206,24 +206,29 @@ final class IframeGivenFilesTests: XCTestCase {
             const frame = document.createElement('iframe');
             frame.style.cssText = 'border:0;width:300px;height:200px';
             await new Promise(resolve => { frame.onload = resolve; frame.src = new URLSearchParams(location.search).get('file'); document.body.append(frame); });
-            await new Promise(resolve => setTimeout(resolve, 1500));
             const shown = frame.contentDocument;
-            // macOS shows it in WebKit's PDF view (an <embed>); iOS as an image of its pages.
-            return JSON.stringify({ type: shown.contentType, viewer: !!shown.querySelector('embed') || (shown.querySelector('img')?.naturalWidth ?? 0) > 0 });
+            // macOS shows it in WebKit's PDF view (an <embed>); iOS as an image of its pages. Either comes after the load.
+            const viewer = () => !!shown.querySelector('embed') || (shown.querySelector('img')?.naturalWidth ?? 0) > 0;
+            for (const end = Date.now() + 20000; !viewer() && Date.now() < end;) await new Promise(resolve => setTimeout(resolve, 50));
+            return JSON.stringify({ type: shown.contentType, viewer: viewer() });
             """)
         XCTAssertEqual(read["type"] as? String, "application/pdf", "\(read)")
         XCTAssertEqual(read["viewer"] as? Bool, true, "WebKit shows the PDF in the frame: \(read)")
         #if os(macOS)
         // The picture: the PDF's red page fills the frame (it drew nothing under the sandbox).
-        let image = try XCTUnwrap(session.webviews.snapshots()[node.id]?.cgImage(forProposedRect: nil, context: nil, hints: nil), "no snapshot")
-        var pixels = [UInt8](repeating: 0, count: 100 * 100 * 4)
-        let red = pixels.withUnsafeMutableBytes { bytes -> Int in
-            let context = CGContext(data: bytes.baseAddress, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 400,
-                                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-            context.draw(image, in: CGRect(x: 0, y: 0, width: 100, height: 100))
-            return stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 200 && bytes[$0 + 1] < 60 && bytes[$0 + 2] < 60 }.count
+        // Count the red pixels in the frame's snapshot, drawn at 100 × 100; nil without a snapshot
+        let red = { () -> Int? in
+            guard let image = session.webviews.snapshots()[node.id]?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+            var pixels = [UInt8](repeating: 0, count: 100 * 100 * 4)
+            return pixels.withUnsafeMutableBytes { bytes -> Int in
+                let context = CGContext(data: bytes.baseAddress, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 400,
+                                        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                context.draw(image, in: CGRect(x: 0, y: 0, width: 100, height: 100))
+                return stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 200 && bytes[$0 + 1] < 60 && bytes[$0 + 2] < 60 }.count
+            }
         }
-        XCTAssertGreaterThan(red, 3000, "the PDF's red page")
+        var seen: Int?
+        waitFor("the PDF's red page", facts: { seen.map { "\($0) red pixels" } ?? "no snapshot" }) { seen = red(); return (seen ?? 0) > 3000 }
         #endif
     }
 

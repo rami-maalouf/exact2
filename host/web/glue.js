@@ -1,5 +1,5 @@
 // @ref LLP 1007 §3: the app is the wasm; this is its DOM host.
-import { sheetLeaves, liveById, sourceField, popoverCommand, contextAt, grantOrigins, createGrantSet, grantError, rawGrantText, scopedGrantSet, deferredFulfill, refusal, commitGuestOrigin, guestMessageAuthorized, pageGivenFiles, focusController, runFocusCommands, controlEvent, environment, preferences, onPreferences, inertAncestor, modalLayers, editMenu, navigation, afterPaintPieces, afterPaint, presenceLoader, animationClock, scrollFollowers, renderMarkup, navigableURL, navigates, refuseURL, frameURL, dataURL, devFirst, reportPlace, reportTime, launchLocation, pageReporter, appRootFontSize, valuedControl, typedControl, settleValue, foldBits, foldEnv, onFold, preferFold, fold, animationClocks, onSelection, noteFit, refitTexts, pageTitle, pageStore, routeFlags } from "./navigation.js";
+import { listItem, syncListItemRoles, sheetLeaves, liveById, sourceField, popoverCommand, contextAt, grantOrigins, createGrantSet, grantError, rawGrantText, scopedGrantSet, deferredFulfill, refusal, commitGuestOrigin, guestMessageAuthorized, pageGivenFiles, focusController, runFocusCommands, controlEvent, environment, preferences, onPreferences, inertAncestor, modalLayers, editMenu, navigation, afterPaintPieces, afterPaint, presenceLoader, animationClock, scrollFollowers, renderMarkup, navigableURL, navigates, refuseURL, frameURL, dataURL, devFirst, reportPlace, reportTime, launchLocation, pageReporter, appRootFontSize, valuedControl, typedControl, settleValue, foldBits, foldEnv, onFold, preferFold, fold, animationClocks, onSelection, noteFit, refitTexts, pageTitle, pageStore, routeFlags } from "./navigation.js";
 let guestOutline, guestTap, guestType, reveal, backButton, viewBox, layoutBoxes, scrollRange, selectAll, typeControl, glidesSettled, scrollsSeen, agentInputLoading;
 const AGENT_ADMITTED = true; // false in a production bake: host/web/build.mjs rewrites this line (LLP 1069.007 D2)
 let httpModule, pickerModule, documentsModule, frameModule, frameNavigation; const frameNav = () => frameNavigation ??= loadAfterPaint('./frame-navigation.js', 'frameNavigation'); // frameNavigation: an iframe's navigation records and commands (LLP 1020.002); the file picker (LLP 1069.002) and documents (LLP 1069.010), loaded on first use
@@ -390,7 +390,8 @@ function refreshSymbols() {
   }
   // Sources can set intrinsic size synchronously; percentage padding must resolve against the resulting layout.
   const fits = configs.map(({ el, point, objectFit }) => {
-    const cs = getComputedStyle(el), fits = point <= el.clientWidth - (parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)) && point <= el.clientHeight - (parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom));
+    const cs = objectFit === "scale-down" ? getComputedStyle(el) : null;
+    const fits = cs && point <= el.clientWidth - (parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)) && point <= el.clientHeight - (parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom));
     // `fill`, CSS's initial `object-fit`, keeps a symbol's aspect, as on the Apple hosts (LLP 1011 §4).
     return [el, objectFit === "none" || (objectFit === "scale-down" && fits) ? `${point}px ${point}px` : objectFit === "scale-down" || objectFit === "fill" ? "contain" : objectFit];
   });
@@ -562,7 +563,7 @@ function attach(el, id, handlers) {
     } else if (kind === "toggle") { on(kind, e => send(wasm.exact_dispatch(id, 50, writeIn(`${e.oldState},${e.newState}`), now()))); } else if (kind === "atompress") { on(kind, e => { const [k, source, href, start, end, ...held] = e.detail; send(wasm.exact_dispatch(id, 59, writeIn(`${start},${end},${["Shift+", "Control+", "Alt+", "Meta+"].filter((_, i) => held[i]).join("")}\n${k}\n${href}\n${source}`), now())); }); // a press on an inline atom (LLP 1045.000 D7), host kind 59
     } else if (kind === "beforeinput" || (kind === "selectionchange" && sourceField(el))) { controlEvent(el, kind, on, (k, text, e) => { const outer = keyEvent; keyEvent = e; try { send(wasm.exact_dispatch(id, k, writeIn(text), now())); } finally { keyEvent = outer; } });
     } else if (kind === "selectionchange") { // its part of the page's selection (navigation.js `onSelection`): kind 35, offsets, rectangle count and coordinates, then text
-      onSelection(el, (text, a, b, rects) => { if (views.get(id) === el && !retiredViews.has(el)) send(wasm.exact_dispatch(id, 35, writeIn([a, b, rects.length, ...rects.flatMap(r => r.slice(0, 4)), text].join(",")), now())); });
+      el.exactSelection = onSelection(el, (text, a, b, rects) => { if (views.get(id) === el && !retiredViews.has(el)) send(wasm.exact_dispatch(id, 35, writeIn([a, b, rects.length, ...rects.flatMap(r => r.slice(0, 4)), text].join(",")), now())); });
     } else if (kind === "copy" || kind === "cut" || kind === "paste") { // the clipboard's events at the focused node, the nearest handler's (spreadsheet F4); a field's own paste proceeds; a paste's files are minted `doc:` handles at once (57: their count, a line each, then the text; documents-glue.js `pasted`), the driver's standing in under the agent
       if (kind === "paste") documentsGlue(); atBody(kind, on(kind, e => { e.stopPropagation(); const outer = keyEvent; keyEvent = e; try { const text = e.clipboardData?.getData("text/plain") ?? "", driver = agentMode ? globalThis.exact.agentPaste : null; globalThis.exact.agentPaste = null; const files = kind === "paste" && (e.clipboardData?.files?.length || driver) ? globalThis.exact.documents?.pasted(e.clipboardData, driver) ?? [] : []; send(wasm.exact_dispatch(id, files.length ? 57 : 32 + ["copy", "cut", "paste"].indexOf(kind), writeIn(files.length ? `${files.length}\n${files.join("\n")}\n${text}` : text), now())); } finally { keyEvent = outer; } })); // preventDefault() cancels the default (a field's own paste; #125)
     } else if (["contextmenu", "dblclick", "wheel", "drop", "beforeunload", "dragenter", "dragleave"].includes(kind)) { // with their records (input-glue `mouse`; studio diary R22, R3, R19, R17); a running wheel or beforeunload is the event its `preventDefault()` prevents
@@ -600,7 +601,7 @@ function viewFor(op, id) {
 function apply(batch) {
   // Retire before teardown blur. Keep removed descendants attached to their removed parent for the outgoing focusout; presence reads leaving boxes before any op (LLP 1063).
   for (const op of batch.ops ?? []) {
-    if (op.op === "destroy") { const el = views.get(op.id); if (el) { retiredViews.add(el); el.exactAppFrame?.dispose(); el.exactIntersect?.(); el.exactResize?.(); } }
+    if (op.op === "destroy") { const el = views.get(op.id); if (el) { retiredViews.add(el); el.exactSelection?.(); el.exactAppFrame?.dispose(); el.exactIntersect?.(); el.exactResize?.(); } }
   }
   presence.live?.before(batch, views);
   listSelection?.before();
@@ -636,7 +637,7 @@ function apply(batch) {
       }
       case "props": {
         const el = viewFor("props", op.id);
-        if (el) { applyProps(el, op.set, op.clear); if (el.hasAttribute("data-time-reservation") || el.exactLiveTime) loadLiveTime(el); }
+        if (el) { applyProps(el, op.set, op.clear); if (op.set?.role !== undefined || op.clear?.includes("role")) syncListItemRoles(el); else if ((op.set?.popover !== undefined || op.clear?.includes("popover")) && el.parentElement?.hasAttribute("data-exact-list-item")) listItem(el); if (el.hasAttribute("data-time-reservation") || el.exactLiveTime) loadLiveTime(el); }
         break;
       }
       case "style": {
@@ -650,7 +651,7 @@ function apply(batch) {
         const want = [];
         for (const id of op.ids) {
           const child = viewFor("children", id);
-          if (child) want.push(child);
+          if (child) want.push(el.hasAttribute("data-exact-list") && !lists.has(el) ? listItem(child, el) : child);
         }
         // Reorder in place: keyed rows keep their elements (and their state).
         // A canvas's surface element is skipped: not a child, never removed.
@@ -689,7 +690,7 @@ function apply(batch) {
         // A secret the app kept or forgot (LLP 1018 D6): `localStorage`, origin-scoped, is the web's secret store; a persisted
         // state (LLP 1116 D5) is kept under its own name, as persist.js keeps it. A nameless agent drive
         // starts from nothing; a named `--storage` keeps this origin's keys.
-        if (agentKeepsStore) pendingStore.set(op.name, op.value);
+        if (agentKeepsStore) { if (op.durable) pendingStore.discard(op.name); else pendingStore.set(op.name, op.value); }
         break;
       }
       case "storage": {
@@ -713,8 +714,7 @@ function apply(batch) {
       case "abort": { const c = byTicket.get(op.ticket); byTicket.delete(op.ticket); forgettable.delete(c); c?.abort(); break; } // the app aborted it: cancelled whatever its method, as a browser's fetch is
       case "continue": {
         const requestIncarnation = incarnation;
-        const p = Promise.resolve().then(() => moduleLoader.run(op.token))
-          .then(result => safelyFulfill(requestIncarnation, op.ticket, 0, 200, "", encoder.encode(JSON.stringify(result))))
+        const p = Promise.resolve().then(() => moduleLoader.run(op.token, result => safelyFulfill(requestIncarnation, op.ticket, 0, 200, "", encoder.encode(JSON.stringify(result)))))
           .catch(error => safelyFulfill(requestIncarnation, op.ticket, 3, 0, "", encoder.encode(String(error))));
         track(p, op.ticket);
         break;
@@ -815,13 +815,13 @@ function apply(batch) {
           else if (ruling.present) navigator.share(Object.fromEntries(Object.entries({ title, text, url }).filter(([, v]) => v != null)))
             .then(() => "share: shared", e => e?.name === "AbortError" ? "share: dismissed" : `share: refused: ${e?.name ?? e}`).then(log);
         }
-        else if (/^(navigate|traverseHistory|stopLoading|captureScreenshot)$/.test(op.name) || op.name === "reload" && op.args?.[0] != null) frameNav().then(m => m.command(op.name, op.args ?? [], log, [...views.values()].filter(e => e instanceof HTMLIFrameElement && !retiredViews.has(e)))); /* a frame's (LLP 1020.002 D3) */ else if (op.name === "openDevTools") log(`openDevTools("${op.args?.[0]}") refused: a page cannot open the browser's developer tools; open them from the browser's menu`); /* a frame's inspector (D11) */ else if (/^(start|stop)Trace_EXPERIMENTAL$/.test(op.name)) log(`${op.name} refused: the web host does not record traces; use the browser's performance panel`); /* the Apple hosts' */ else if (!/^(playSound|playSounds|stopSounds|sendMIDI|requestMIDIAccess)$/.test(op.name)) console.warn(`exact: unknown command ${op.name}`); // the voice table's and the MIDI queue's are the runner's own, played from its `sound` and `midi` ops (LLP 1096 D7, LLP 1125 D7)
+        else if (/^(navigate|traverseHistory|stopLoading|captureScreenshot)$/.test(op.name) || op.name === "reload" && op.args?.[0] != null) frameNav().then(m => m.command(op.name, op.args ?? [], log, [...views.values()].filter(e => e instanceof HTMLIFrameElement && !retiredViews.has(e)))); /* a frame's (LLP 1020.002 D3) */ else if (op.name === "openDevTools") log(`openDevTools("${op.args?.[0]}") refused: a page cannot open the browser's developer tools; open them from the browser's menu`); /* a frame's inspector (D11) */ else if (/^(start|stop)Trace_EXPERIMENTAL$/.test(op.name)) log(`${op.name} refused: the web host does not record traces; use the browser's performance panel`); /* the Apple hosts' */ else if (op.name === "exitFullscreen") { if (document.fullscreenElement) document.exitFullscreen().catch(e => log(`exitFullscreen: refused: ${e.name}`)); } else if (op.name === "setWindowOpacity") log("setWindowOpacity refused: a page cannot change its window's opacity"); /* LLP 1069.010 */ else if (!/^(playSound|playSounds|stopSounds|sendMIDI|requestMIDIAccess)$/.test(op.name)) console.warn(`exact: unknown command ${op.name}`); // the voice table's and the MIDI queue's are the runner's own, played from its `sound` and `midi` ops (LLP 1096 D7, LLP 1125 D7)
         break;
       }
       case "destroy": {
         arrange.destroy(op.id);
         motion.destroy(op.id);
-        const el = views.get(op.id); if (el) { retiredViews.add(el); el.exactAppFrame?.dispose(); el.exactIntersect?.(); el.exactResize?.(); el.exactMarkup?.destroy(); el.exactDecorations?.destroy(); el.exactLiveTime?.destroy(); el.exactNative?.destroy(); if (el instanceof HTMLMediaElement) { globalThis.exact.removeMedia?.(el); el.pause(); el.removeAttribute("src"); el.load(); } forgetList(el); followScroll(el, false); messageFrames.delete(el); if (!presence.live?.keeps(el) && !retiredViews.has(el.parentElement) && !sheetLeaves(el)) el.remove(); }
+        const el = views.get(op.id); if (el) { retiredViews.add(el); el.exactSelection?.(); el.exactAppFrame?.dispose(); el.exactIntersect?.(); el.exactResize?.(); el.exactMarkup?.destroy(); el.exactDecorations?.destroy(); el.exactLiveTime?.destroy(); el.exactNative?.destroy(); if (el instanceof HTMLMediaElement) { globalThis.exact.removeMedia?.(el); el.pause(); el.removeAttribute("src"); el.load(); } forgetList(el); followScroll(el, false); messageFrames.delete(el); if (!presence.live?.keeps(el) && !retiredViews.has(el.parentElement) && !sheetLeaves(el)) el.remove(); }
         views.delete(op.id); messageViews.delete(op.id); globalThis.exact.gpu?.destroy(op.id); dropSurface(op.id); break;
       }
       case "roots": {
@@ -1346,7 +1346,7 @@ async function bootNow(bytes, assets = devAssets, current = () => true, module =
   collections.reset();
   for (const el of lists.keys()) forgetList(el);
   for (const el of views.values()) if (el instanceof HTMLMediaElement) { globalThis.exact.removeMedia?.(el); el.pause(); el.removeAttribute("src"); el.load(); }
-  for (const el of views.values()) { el.exactAppFrame?.dispose(); el.exactMarkup?.destroy(); el.exactDecorations?.destroy(); el.exactLiveTime?.destroy(); el.exactNative?.destroy(); el.exactResize?.(); el.exactIntersect?.(); } views.clear();
+  for (const el of views.values()) { el.exactSelection?.(); el.exactAppFrame?.dispose(); el.exactMarkup?.destroy(); el.exactDecorations?.destroy(); el.exactLiveTime?.destroy(); el.exactNative?.destroy(); el.exactResize?.(); el.exactIntersect?.(); } views.clear();
   messageFrames.clear(); messageViews.clear();
   if(storageRequests){storageRequests.then(s=>s.dispose()).catch(()=>{});storageRequests=null;}
   grants = []; grantSet = null; unparsed = "";
@@ -1371,7 +1371,7 @@ async function bootNow(bytes, assets = devAssets, current = () => true, module =
 }
 // `agent`, `agentSettled` and `now` exist only in agent mode; a normal page uses the browser's clock.
 let ready;
-globalThis.exact = { ...globalThis.exact, mutate, devFirst: () => devFirst(), pageFacts: Object.assign(pageFacts, { changed: () => pageChanged() }), abortWake: function wake() { if (wake.due || !wasm?.exact_collect_aborts) return; wake.due = true; setTimeout(() => { wake.due = false; send(wasm.exact_collect_aborts()); }); }, keptChanged: () => { if (wasm?.exact_changed) applyBatch(JSON.parse(readOut(wasm.exact_changed(writeIn("doc-watch:doc:/"))))); }, // the GPU tier's reader and teller (gpu-tier.js); a fetch a realm aborted between batches (module-glue.js door 23); the kept documents' list changed (documents-glue.js, LLP 1069.010.000 D5)
+globalThis.exact = { ...globalThis.exact, discardSecretWrite: name => pendingStore.discard(name), mutate, devFirst: () => devFirst(), pageFacts: Object.assign(pageFacts, { changed: () => pageChanged() }), abortWake: function wake() { if (wake.due || !wasm?.exact_collect_aborts) return; wake.due = true; setTimeout(() => { wake.due = false; send(wasm.exact_collect_aborts()); }); }, keptChanged: () => { if (wasm?.exact_changed) applyBatch(JSON.parse(readOut(wasm.exact_changed(writeIn("doc-watch:doc:/"))))); }, // the GPU tier's reader and teller (gpu-tier.js); a fetch a realm aborted between batches (module-glue.js door 23); the kept documents' list changed (documents-glue.js, LLP 1069.010.000 D5)
   // @ref LLP 1038 D8/D11 — synchronous for the serialized popstate caller.
   navigate: (location) => {
     const nav = root.firstElementChild;

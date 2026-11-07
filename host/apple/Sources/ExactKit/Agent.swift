@@ -52,7 +52,7 @@ public final class Agent {
             #if os(iOS) || os(tvOS)
             let reach = presenter.reach(of: node)
             #else
-            let reach = CGRect(origin: .zero, size: presenter.viewport.bounds.size)
+            let reach = CGRect(origin: .zero, size: presenter.viewportSize)
             #endif
             guard let fragment = fragments.first(where: { reach.contains(CGPoint(x: $0.midX, y: $0.midY)) }) ?? fragments.first else { return nil }
             bounds = fragment
@@ -189,7 +189,7 @@ public final class Agent {
         if op == "perf", req["frames"] as? Bool == true {
             let selected = req["source"] as? String == "scroll" ? session.frameHealth.nativeHealth : session.frameHealth
             if req["source"] as? String == "scroll", selected == nil {
-                Agent.reply(["format": FrameHealthMetrics.format, "available": false, "error": "native-scroll-unobserved", "reason": FrameHealth.nativeObserverAllowed ? "No native scroll has been observed. Reproduce a native drag on iOS/tvOS 18 or later." : "Native-scroll observation is experimental and disabled in release builds. Use a development build with iOS/tvOS 18 or later."])
+                Agent.reply(["format": FrameHealthMetrics.format, "available": false, "error": "native-scroll-unobserved", "reason": FrameHealth.developmentObserver ? "No native scroll has been observed. Reproduce a native drag on iOS/tvOS 18 or later." : "Native-scroll observation is experimental and disabled in release builds. Use a development build with iOS/tvOS 18 or later."])
                 return
             }
             // `perf frames track` (exact.frame-health.track/1): one node's scroller, per committed offset, leased.
@@ -523,6 +523,12 @@ public final class Agent {
     /// `agent::MASKED`, which its tree already shows.
     static func shownValue(_ value: String, of v: NodeView) -> String {
         v.props["type"] == "password" && !value.isEmpty ? "•••" : value
+    }
+
+    /// The refusal of `op` where its platform path is private API, which only
+    /// a development build compiles (LLP 1035.003 §3).
+    static func developmentOnly(_ op: String) -> [String: Any] {
+        ["error": "\(op): a development build's alone; it takes private API, which a production build does not compile", "developmentOnly": true]
     }
 
     public static func reply(_ obj: [String: Any]) {

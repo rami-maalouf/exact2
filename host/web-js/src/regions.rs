@@ -14,6 +14,7 @@ impl Em<'_> {
         let subject = self
             .f(row.subject, scope)
             .map_err(|x| format!("region {r}: {x}"))?;
+        let subject = self.status_subject(r, parent, subject);
         let arms: Vec<u32> = row.arms.iter().map(|a| a.0).collect();
         match row.kind {
             RegionKind::When | RegionKind::Match => {
@@ -72,6 +73,15 @@ impl Em<'_> {
         Ok(())
     }
 
+    fn status_subject(&mut self, region: u32, parent: &str, subject: String) -> String {
+        let Some(owners) = self.answers.status_region(region) else {
+            return subject;
+        };
+        let owners = super::answers::status_owners(owners);
+        let guard = self.uses.rt("statusSubject");
+        format!("(globalThis.__exactRender?{guard}({parent},{subject},{owners}):{subject})")
+    }
+
     /// The declaration of arm `arm`'s own slots, as `name` (the enclosing
     /// instances' slots spread in), each a signal started from its
     /// initializer in `scope`, which then reads them through `name`; empty
@@ -87,6 +97,7 @@ impl Em<'_> {
         let plan = self.plan;
         let mut own = Vec::new();
         for &k in self.answers.slots(arm) {
+            scope.row_slots.insert(k);
             let slot = &plan.slots[k];
             let init = code::expression(plan, plan.code(slot.init), scope, &mut self.uses)
                 .map_err(|x| format!("child state {}: {x}", plan.str(slot.name)))?;
@@ -130,6 +141,7 @@ impl Em<'_> {
         let subject = self
             .f(row.subject, scope)
             .map_err(|x| format!("region {r}: {x}"))?;
+        let subject = self.status_subject(r, parent, subject);
         let arms: Vec<u32> = row.arms.iter().map(|a| a.0).collect();
         let (item, index) = (format!("i{r}"), format!("x{r}"));
         let mut inner = scope.clone();
@@ -149,9 +161,10 @@ impl Em<'_> {
         let built = std::mem::replace(&mut self.out, saved);
         match list {
             Some(opts) => {
+                let inputs = self.row_inputs(r, scope)?;
                 let _ = write!(
                     self.out,
-                    "$vl({parent},{subject},({item},{index})=>{key},(p,{item},{index})=>{{{built}}},{opts});"
+                    "$vl({parent},{subject},({item},{index})=>{key},(p,{item},{index})=>{{{built}}},{{...{opts},{inputs}}});"
                 );
             }
             None => {

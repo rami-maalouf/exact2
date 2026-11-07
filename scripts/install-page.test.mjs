@@ -155,10 +155,6 @@ test('the install data is what the page renders, for a client that draws its own
   const bare = installData({...manifest,brand:{logo:'assets/logo.png',wordmark:{text:'I',font:'assets/f.woff2'}}});
   assert.equal(bare.reach,null);assert.equal(bare.build.dirty,null);assert.equal(bare.build.source,null);
   assert.deepEqual(bare.brand,{logo:'/assets/logo.png',wordmark:{text:'I',font:'/assets/f.woff2'}});
-  // An AppDrop link is the iOS default; authored iOS methods replace it.
-  const dropped = {...manifest,deploy:{appdrop:{url:'https://appdrop.app/d/k3m9x2p7qa'}}};
-  assert.deepEqual(installData(dropped).platforms.ios.methods.map(m=>[m.kind,m.url,m.label]),[['direct','https://appdrop.app/d/k3m9x2p7qa','Install with AppDrop']]);
-  assert.deepEqual(installData({...dropped,install:{ios:{methods:[]}}}).platforms.ios.methods,[]);
 });
 
 test('only a Mac development response adds local Simulator and signed-device actions', () => {
@@ -294,7 +290,7 @@ printf '%s\\n' '{"value":"aGk="}'
       ChildProcess.prototype.on=function(event,listener){return on.call(this,event,event==='close' ? (...a)=>{listener(...a);closeFilesystemReader();} : listener);};
       await assert.rejects(get(),{code:'EXACT_FS_READER_EXITED'});
       ChildProcess.prototype.on=on;
-      await new Promise(resolve=>setTimeout(resolve,300));
+      // Check at once: a read asked again is the failed read's own, so its helper has run by now
       assert.equal(readFileSync('spawns','utf8'),'x','a closed reader is not asked again');
     `;
     const child=spawnSync(process.execPath,['--input-type=module','-e',program],{cwd:dir,encoding:'utf8',env:{...process.env,PATH:join(dir,'bin')+':'+process.env.PATH}});

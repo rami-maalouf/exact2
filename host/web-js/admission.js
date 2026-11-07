@@ -130,6 +130,8 @@ export async function fetchWith(set, input, init = {}, expires = null, redirect 
     if (response.url && (asset
       ? new URL(response.url).origin !== globalThis.location?.origin
       : !admitsNetwork(set, response.url, 'fetch'))) throw new FetchError('Refused', `${refusal('net.fetch')}: redirected to ${new URL(response.url).origin}`);
+    const landingRefusal = !asset && response.url ? reachRefusal(response.url, origin) : null;
+    if (landingRefusal) { response.body?.cancel().catch(() => {}); throw new FetchError('Refused', `NotAllowedError: ${landingRefusal}`); }
     // Its clone is read whole before it answers, as the native executor
     // collects a body: within the deadline, so a stalled body is this fetch's
     // Timeout, and a body the network cuts off is its Network failure
@@ -142,7 +144,7 @@ export async function fetchWith(set, input, init = {}, expires = null, redirect 
   }
   catch (error) {
     if (error instanceof FetchError) throw error;
-    if (deadline && signal?.aborted && signal.reason === deadline.signal.reason) throw new FetchError('Timeout', `the request timed out after ${deadline.ms} ms`);
+    if (deadline && signal?.aborted && signal.reason === deadline.signal.reason) throw new FetchError('Timeout', `the request timed out after ${until.ms} ms`);
     // The caller's own abort rejects with its signal's reason, as Fetch and the native prelude do: an
     // `AbortError` for a bare `abort()`, or the very value the app gave it.
     if (own?.aborted) throw own.reason;
@@ -218,6 +220,15 @@ export function createSecretFacade(store, admitted, keys) {
       if (String(name).startsWith('exact.kept.')) return null;
       seen.read = true;
       return admitsSecret(admitted, name) && !mustLock(admitted, name) ? store.get(name) ?? null : null;
+    },
+    exclusive(name, work) {
+      effect('store.exclusive()'); allowed(name);
+      if (mustLock(admitted, name)) return Promise.reject(unsupported(name));
+      const context = globalThis.__exact_async_context, owner = context?.current();
+      return store.exclusive(name, () => {
+        const before = context?.swap(owner);
+        try { return work(); } finally { context?.swap(before); }
+      });
     },
     has(name) { return seen.get(name) !== null; },
     locked(name) { effect('store.locked()'); seen.read = true; return false; },

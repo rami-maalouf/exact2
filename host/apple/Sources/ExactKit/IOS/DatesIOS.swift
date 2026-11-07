@@ -28,9 +28,9 @@ extension ControlHost {
         owner.focusForPress(target: owner)?.dispatched()
     }
 
-    func configureDate(_ picker: UIDatePicker, _ owner: NodeView, accent: UIColor?) {
+    func configureDate(_ picker: UIDatePicker, _ owner: NodeView) {
         let kind = kinds[owner.id] ?? "date"
-        assign(picker, \.tintColor, accent)
+        assign(picker, \.tintColor, owner.ownTintColor("accent_color"))
         assign(picker, \.minimumDate, owner.props["min"].flatMap { DateValue.parse(kind, $0) })
         assign(picker, \.maximumDate, owner.props["max"].flatMap { DateValue.parse(kind, $0) })
         let bound = owner.props["value"] ?? ""
@@ -54,7 +54,7 @@ extension ControlHost {
         guard presenter.views[id] != nil, let kind = kinds[id] else { return }
         (picker as? BoundDatePicker)?.empty = false
         presenter.controlValue(id, DateValue.format(kind, picker.date), input: true, change: true)
-        if let owner = presenter.views[id] { configureDate(picker, owner, accent: picker.tintColor) }
+        if let owner = presenter.views[id] { configureDate(picker, owner) }
     }
 
     /// The agent's `type <id> <value>` (D9): the value a pick reports, in
@@ -73,7 +73,7 @@ extension ControlHost {
         picker.setDate(date, animated: false)
         (picker as? BoundDatePicker)?.empty = false
         presenter.controlValue(node.id, text, input: true, change: true)
-        if let owner = presenter.views[node.id] { configureDate(picker, owner, accent: picker.tintColor) }
+        if let owner = presenter.views[node.id] { configureDate(picker, owner) }
         // What it shows, as the web's reply says: the choice, or what the
         // action wrote over it.
         return ["typed": Int(node.id), "value": DateValue.shown(kind, picker), "delivery": "host-activation", "native": "control"]
@@ -97,31 +97,45 @@ final class BoundDatePicker: UIDatePicker {
     var placeholder = "" { didSet { if placeholder != oldValue, empty { setNeedsLayout() } } }
     /// No date: an empty bound value or a cleared one, which the picker's
     /// own `date` cannot say.
-    var empty = false { didSet { if empty != oldValue { setNeedsLayout() } } }
-    private let pill = CALayer(), words = CATextLayer()
-    /// Keep UIKit's exposed elements and their activation; replace only the
-    /// value they announce while the bound value is empty.
-    private func updateEmptyAccessibility() {
-        guard empty else { return }
-        var seen = Set<ObjectIdentifier>()
-        func visit(_ object: NSObject) {
-            guard seen.insert(ObjectIdentifier(object)).inserted else { return }
-            if object !== self, object.isAccessibilityElement {
-                DateAccessibility.value(of: object, follows: self)
-                return
-            }
-            if let elements = object.accessibilityElements, !elements.isEmpty {
-                for case let element as NSObject in elements { visit(element) }
-            } else {
-                let count = object.accessibilityElementCount()
-                if count != NSNotFound, count > 0 {
-                    for i in 0..<count { if let element = object.accessibilityElement(at: i) as? NSObject { visit(element) } }
-                } else if let view = object as? UIView {
-                    for child in view.subviews { visit(child) }
-                }
-            }
+    var empty = false {
+        didSet {
+            guard empty != oldValue else { return }
+            setNeedsLayout()
+            if !empty { filled() }
         }
-        visit(self)
+    }
+    private let pill = CALayer(), words = CATextLayer()
+    /// Exact's elements VoiceOver reads while the picker is empty, one for
+    /// each of UIKit's, kept while that element lives so VoiceOver's cursor
+    /// stays on one (`EmptyDateElement`).
+    private var standIns: [EmptyDateElement] = []
+    private func emptyElements() -> [EmptyDateElement] {
+        let natives = nativeAccessibilityElements()
+        standIns = natives.map { native in standIns.first { $0.native === native } ?? EmptyDateElement(standingFor: native, in: self) }
+        return standIns
+    }
+    override var accessibilityElements: [Any]? {
+        get { empty ? emptyElements() : super.accessibilityElements }
+        set { super.accessibilityElements = newValue }
+    }
+    override func accessibilityElementCount() -> Int { empty ? emptyElements().count : super.accessibilityElementCount() }
+    override func accessibilityElement(at index: Int) -> Any? {
+        guard empty else { return super.accessibilityElement(at: index) }
+        let elements = emptyElements()
+        return elements.indices.contains(index) ? elements[index] : nil
+    }
+    override func index(ofAccessibilityElement element: Any) -> Int {
+        guard empty else { return super.index(ofAccessibilityElement: element) }
+        return emptyElements().firstIndex { $0 === element as AnyObject } ?? NSNotFound
+    }
+    /// A choice ends the empty state while VoiceOver's cursor may be on one
+    /// of Exact's elements, which then go: the cursor moves to UIKit's.
+    private func filled() {
+        let focused = standIns.first { $0.accessibilityElementIsFocused() }?.native
+        standIns = []
+        guard let focused, window != nil else { return }
+        layoutIfNeeded() // UIKit's elements shown again
+        UIAccessibility.post(notification: .layoutChanged, argument: focused)
     }
     private static let nothing = "exact.empty-date"
     override func layoutSubviews() {
@@ -132,15 +146,18 @@ final class BoundDatePicker: UIDatePicker {
         // calendar. (It had been faded to 2%, which iOS 26's glass label
         // still showed: a ghost of today's date under the placeholder.)
         for view in subviews {
+            // Its elements too, which Exact's stand for (`accessibilityElements`),
+            // so VoiceOver's touch finds those and not today's date.
             if empty, view.layer.mask?.name != Self.nothing {
                 let mask = CALayer()
                 mask.name = Self.nothing
                 view.layer.mask = mask
+                view.accessibilityElementsHidden = true
             } else if !empty, view.layer.mask?.name == Self.nothing {
                 view.layer.mask = nil
+                view.accessibilityElementsHidden = false
             }
         }
-        updateEmptyAccessibility()
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         guard empty else { pill.removeFromSuperlayer(); return }

@@ -88,7 +88,15 @@ final class FieldSelections {
     private var pending: [UInt32: FieldSelection] = [:]
     /// Selection changes the host makes, which are not the person's.
     private var quiet = 0
+    /// Fields a `setRangeText` is editing through their editor's own
+    /// change: no `beforeinput` and no `maxlength` apply to it.
+    var replacing: Set<UInt32> = []
     #if os(macOS)
+    /// The field a press focused, by the press's timestamp, with the
+    /// selection a script set from that focus on (`pressing`).
+    private var pressFocus: [UInt32: (press: TimeInterval, selection: FieldSelection?)] = [:]
+    /// Fields whose press `pressing` is tracking.
+    private var pressed: Set<UInt32> = []
     private var observer: NSObjectProtocol?
     #endif
 
@@ -190,6 +198,9 @@ final class FieldSelections {
     /// shown now, else the editor's is what was last seen.
     func focused(_ node: NodeView) {
         guard Self.tracks(node) else { return }
+        #if os(macOS)
+        focused(node, by: NSApp.currentEvent)
+        #endif
         quietly {
             if let s = pending.removeValue(forKey: node.id) {
                 _ = node.showSelection(s.range)
@@ -246,10 +257,11 @@ final class FieldSelections {
         set(node, .clamped(start, end, word, length: node.fieldText.utf16.count))
     }
 
-    /// HTML's range replacement, after the command's commit. It is a value
-    /// write, not an undoable user edit; the admitted extra input keeps the
-    /// app's binding synchronized (LLP 1069.001, issue #275). On the Markdown
-    /// editor it is one undo step, as a format is (LLP 1045 D1).
+    /// HTML's range replacement, after the command's commit. It is not the
+    /// person's edit; the admitted extra input keeps the app's binding
+    /// synchronized (LLP 1069.001, issue #275). It is one undo step, on the
+    /// Markdown editor as a format is (LLP 1045 D1), and on the Mac on a
+    /// plain field with an editor (LLP 1069.001, amended 2026-11-04).
     func setRangeText(_ args: [Any]) {
         guard [2, 4, 5].contains(args.count), let name = args[0] as? String,
               let replacement = args[1] as? String else { return }
@@ -295,7 +307,7 @@ final class FieldSelections {
             replacementInput(node, next, selection, data: replacement)
             return
         }
-        quietly { node.replaceFieldValue(next) }
+        quietly { node.replaceFieldRange(next, fields: self) }
         // Value mutation invalidates the prior scripted-selection suppression.
         scripted[node.id] = nil
         set(node, selection, notify: false)
@@ -326,7 +338,39 @@ final class FieldSelections {
         set(node, FieldSelection(start: 0, end: length))
     }
 
+    #if os(macOS)
+    /// The event the field took the focus in, when it is a press: for that
+    /// press's `pressing` (the window makes a pressed view first responder
+    /// before its `mouseDown`), which alone matches its timestamp.
+    func focused(_ node: NodeView, by event: NSEvent?) {
+        if let event, event.type == .leftMouseDown { pressFocus[node.id] = (event.timestamp, nil) }
+    }
+
+    /// A press on `node`'s field, `track` its editor's tracking. The press
+    /// that focuses the field runs the field's `focus` handler before the
+    /// editor puts the caret where the press is (the window focuses a pressed
+    /// view before its `mouseDown`); a selection a script sets from that
+    /// focus on (an address bar's select on focus) is shown again once the
+    /// press ends, as Chrome keeps it. A press that selects text itself (a
+    /// drag, a double-click) keeps what it selected, and a press on a field
+    /// that already had the focus is the editor's alone.
+    func pressing(_ node: NodeView, _ event: NSEvent, _ track: () -> Void) {
+        guard Self.tracks(node), !pressed.contains(node.id) else { return track() }
+        pressed.insert(node.id)
+        defer { pressed.remove(node.id) }
+        track()
+        guard let focus = pressFocus.removeValue(forKey: node.id), focus.press == event.timestamp, let s = focus.selection,
+              presenter.views[node.id] === node, let live = node.liveSelection, live.length == 0, !s.same(FieldSelection(live)) else { return }
+        quietly { _ = node.showSelection(s.range) }
+        last[node.id] = s
+        scripted[node.id] = s
+    }
+    #endif
+
     func set(_ node: NodeView, _ s: FieldSelection, notify: Bool = true) {
+        #if os(macOS)
+        if pressFocus[node.id] != nil { pressFocus[node.id]?.selection = s }
+        #endif
         if current(node) != s { selectionChanged(node) }
         let again = scripted[node.id] == s
         scripted[node.id] = s
@@ -371,6 +415,9 @@ final class FieldSelections {
         last.removeAll()
         scripted.removeAll()
         pending.removeAll()
+        #if os(macOS)
+        pressFocus.removeAll()
+        #endif
     }
 }
 
@@ -397,19 +444,67 @@ extension NodeView {
         #endif
     }
 
+    /// `edit` as one undo step of `manager`'s, of its own (issue #792). The
+    /// manager groups by event: an edit earlier in this event (the person's
+    /// typing, another call) has opened the event's group, which a group
+    /// begun now would join. That group is closed, and this step's own is
+    /// left open in its place for the close the manager has scheduled at
+    /// the end of the event, which raises where no group is open (LLP 1045
+    /// D5). With none open, its own is closed here. `edit` must register an
+    /// action: the manager keeps an empty group as a step that undoes nothing.
+    func oneUndoStep(_ manager: UndoManager?, _ edit: () -> Void) {
+        let byEvent = manager?.groupsByEvent ?? false, open = byEvent && manager?.groupingLevel == 1
+        if open { manager?.endUndoGrouping() }
+        manager?.groupsByEvent = false
+        manager?.beginUndoGrouping()
+        edit()
+        if !open { manager?.endUndoGrouping() }
+        manager?.groupsByEvent = byEvent
+    }
+
+    /// A plain field's `setRangeText`, on the Mac: `value` goes in through
+    /// the editor's own undoable change, as one undo step that restores the
+    /// text and selection before it, as the Markdown editor's does (LLP
+    /// 1069.001, amended 2026-11-04). It is the script's edit: the app hears no
+    /// `beforeinput` and no `input` for it (the caller sends the
+    /// replacement's), and `maxlength` does not apply. Where there is no
+    /// editor to undo in (an input not being edited) or text is being
+    /// composed, the value is written as the app's own value is.
+    func replaceFieldRange(_ value: String, fields: FieldSelections) {
+        #if os(macOS)
+        guard let editor = selectionEditor, !editor.hasMarkedText(), let manager = editor.undoManager,
+              let edit = minimalTextEdit(from: editor.string, to: value) else { return replaceFieldValue(value) }
+        pendingValue = nil
+        toldText = value
+        writingValue = true
+        fields.replacing.insert(id)
+        // A script's edit, which HTML allows on a read-only field too.
+        let editable = editor.isEditable
+        editor.isEditable = true
+        oneUndoStep(manager) {
+            editor.breakUndoCoalescing()
+            if editor.shouldChangeText(in: edit.range, replacementString: edit.text) {
+                editor.textStorage?.replaceCharacters(in: edit.range, with: NSAttributedString(string: edit.text, attributes: editor.typingAttributes))
+                editor.didChangeText()
+            }
+            editor.breakUndoCoalescing()
+        }
+        editor.isEditable = editable
+        fields.replacing.remove(id)
+        writingValue = false
+        #else
+        // UIKit's text undo takes such a step back, but its redo restores
+        // nothing (measured through `insertText` and `replace(_:withText:)`).
+        replaceFieldValue(value)
+        #endif
+        // An editor that refused the change: the value is written all the same.
+        if !fieldText.utf16.elementsEqual(value.utf16) { replaceFieldValue(value) }
+    }
+
     /// The Markdown editor's `setRangeText`: the source becomes `value`
     /// through the editor's own input, as an undo step of its own that
-    /// restores the source, and `selection` is shown. False on tvOS, whose
-    /// text views do not edit.
-    ///
-    /// Each call is one step (issue #792). The manager groups by event: an
-    /// edit earlier in this event (the person's typing, another call) has
-    /// opened the event's group, which a group begun now would join. That
-    /// group is closed, and this call's own is left open in its place for
-    /// the close the manager has scheduled at the end of the event, which
-    /// raises where no group is open (LLP 1045 D5). With none open, its own
-    /// is closed here. Neither is ever empty, which the manager would keep
-    /// as a step that undoes nothing.
+    /// restores the source (`oneUndoStep`), and `selection` is shown. False
+    /// on tvOS, whose text views do not edit.
     func replaceMarkdownSource(_ value: String, selecting selection: NSRange) -> Bool {
         #if os(tvOS)
         return false
@@ -418,34 +513,27 @@ extension NodeView {
         let edit = minimalTextEdit(from: fieldText, to: value)
         // An unchanged source makes no step: only the selection moves.
         let manager = edit == nil ? nil : f.undoManager
-        let byEvent = manager?.groupsByEvent ?? false, open = byEvent && manager?.groupingLevel == 1
-        if open { manager?.endUndoGrouping() }
-        manager?.groupsByEvent = false
         editor.applying = true
-        #if os(macOS)
         // A script's edit, which HTML allows on a read-only field too.
         let editable = f.isEditable
         f.isEditable = true
-        f.breakUndoCoalescing()
-        manager?.beginUndoGrouping()
-        if let edit { f.insertText(edit.text, replacementRange: edit.range) }
-        f.setSelectedRange(selection)
-        if !open { manager?.endUndoGrouping() }
-        f.breakUndoCoalescing()
-        f.isEditable = editable
-        #else
-        let editable = f.isEditable
-        f.isEditable = true
-        manager?.beginUndoGrouping()
-        if let edit {
-            f.selectedRange = edit.range
-            f.insertText(edit.text)
+        #if os(macOS)
+        oneUndoStep(manager) {
+            f.breakUndoCoalescing()
+            if let edit { f.insertText(edit.text, replacementRange: edit.range) }
+            f.setSelectedRange(selection)
         }
-        f.selectedRange = selection
-        if !open { manager?.endUndoGrouping() }
-        f.isEditable = editable
+        f.breakUndoCoalescing()
+        #else
+        oneUndoStep(manager) {
+            if let edit {
+                f.selectedRange = edit.range
+                f.insertText(edit.text)
+            }
+            f.selectedRange = selection
+        }
         #endif
-        manager?.groupsByEvent = byEvent
+        f.isEditable = editable
         editor.applying = false
         editor.bookmark = selection
         restyleMarkup()

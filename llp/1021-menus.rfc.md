@@ -5,7 +5,7 @@
 **Systems:** Kernel (a top layer; the popover's box anchored to its invoker), Contract (HTML popover and dialog declarations), Web host (the Popover API by identity), Apple host (menu-shaped popovers presented as UIMenu/NSMenu), Linux host (a kernel-painted top layer), Agent API (no ninth operation), Weird Castle (the account switcher, first consumer)
 **Author:** Claude (Fable 5) for Charlie Cheever
 **Date:** 2026-08-30
-**Revision:** §5.1, 2026-10-05 (Claude, Opus 5.5): the long-press context menu earned back, with its preview and commit, for the Signal clone's chat list (Charlie's approval). §5.2, 2026-10-07 (Claude, Opus 5.5): submenus earned back for the T3 Code clone's row menus (#141), with `position-area="right span-bottom"`. §5.3.1, 2026-10-22 (Claude, Opus 5.5): the menu bar's own items — app-wide enablement, `about` and `none`, eleven more removal ids, View's zoom — for the T3 Code clone's app-owned menu code. §5.3.2, 2026-10-23 (Claude, Opus 5.5): the declared menu bar on Windows, a painted Fluent row (Charlie's admission of Windows). D2, 2026-10-28 (Claude, Opus 5.5): a popover at its authored `left`/`top`, and the press's `clientX`/`clientY`, for the T3 Code clone's menus that open at the click ("At the press point", below). §5.3.3, 2026-10-28 (Claude, Opus 5.5): File ▸ Close Window's chord, `-exact-menu-keys`. §5.1, 2026-10-28 (Claude, Opus 5.5): a keyboard or VoiceOver menu request no node answers gets the menu a right-click there would show, on macOS.
+**Revision:** §5.1, 2026-10-05 (Claude, Opus 5.5): the long-press context menu earned back, with its preview and commit, for the Signal clone's chat list (Charlie's approval). §5.2, 2026-10-07 (Claude, Opus 5.5): submenus earned back for the T3 Code clone's row menus (#141), with `position-area="right span-bottom"`. §5.3.1, 2026-10-22 (Claude, Opus 5.5): the menu bar's own items — app-wide enablement, `about` and `none`, eleven more removal ids, View's zoom — for the T3 Code clone's app-owned menu code. §5.3.2, 2026-10-23 (Claude, Opus 5.5): the declared menu bar on Windows, a painted Fluent row (Charlie's admission of Windows). D2, 2026-10-28 (Claude, Opus 5.5): a popover at its authored `left`/`top`, and the press's `clientX`/`clientY`, for the T3 Code clone's menus that open at the click ("At the press point", below). §5.3.3, 2026-10-28 (Claude, Opus 5.5): File ▸ Close Window's chord, `-exact-menu-keys`. §5.1, 2026-10-28 (Claude, Opus 5.5): a keyboard or VoiceOver menu request no node answers gets the menu a right-click there would show, on macOS. §5.3.1, 2026-11-04 (Claude, Opus 5.5): View's zoom is a page zoom, as Chromium's, and `setPageZoom` sets it (Daehyeon's ruling).
 **Related:** LLP 1017 §8.1 (literal HTML/CSS names, no aliases — the rule that names every row here), LLP 1001 (where a deviation from the bare element is declared), LLP 1008 (host state that never enters the plan — scroll offset — and the native text field, the one native control so far), LLP 1012 (the eight operations; `tap` is a journal entry into the runner, never OS input), LLP 1014 (the canvas capture the top layer sits outside of), LLP 1018 (the `EXACT_AGENT` presentation-swap precedent: `MemoryStore` for the keychain), weird-castle e644c82 (the hand-rolled switcher overlay this replaces). Platform record: the HTML Popover API and invoker attributes; the WAI-ARIA menu pattern; Apple HIG "Menus" and "Pull-down buttons"; `UIMenu`/`UIButton.menu`/`showsMenuAsPrimaryAction` (iOS 14+), `NSMenu` (macOS).
 
 ## 1. Summary
@@ -913,12 +913,44 @@ menu's glass and the dismissal. In the delegate:
   its animator's completion. A hidden row, or no row,
   means no preview, and UIKit's own lifted node is the preview. Two rows
   are refused, logged as `context menu <id> refused a preview: …`.
-- The **targeted preview** (highlight and dismissal) is the node itself
-  (`UITargetedPreview(view:)`), with a `visiblePath` for its
-  `border-radius`, so the lift and the morph are Apple's. After a commit
-  that navigated, the dismissal has no target: the node is under the new
-  screen, as Signal's is under the conversation. After a press that
-  stayed, the dismissal returns to the node.
+- The **targeted preview** (highlight and dismissal) is the node itself,
+  live (`UITargetedPreview(view:)`), clipped to its `border-radius`
+  outline, so the lift, the morph and the return are Apple's: UIKit hides
+  the node while it is lifted. It rises over the view of the controller
+  that holds the node, not the node's superview, so an ancestor that clips
+  (a strip that scrolls sideways) cuts neither it nor its shadow. A text
+  run that names a `contextPopover` cannot lift its paragraph, which UIKit
+  would hide whole: it lifts a picture of its lines with the padding UIKit
+  gives text lines (`UIPreviewParameters(textLineRects:)`), taken as the
+  finger lands, before a press the touch starts has drawn. Wherever it
+  can, the picture shares pixels already drawn rather than copying them.
+  Its words are a layer showing the paragraph's text raster cut to the
+  run, at the paragraph's opacity; words shown any other way (vibrancy, an
+  HDR shadow's cast, rolling numerals) come from a snapshot. Under them is
+  what lies under the paragraph without its other text, which the padding
+  would take in: one color where only fills that cover the area paint
+  there, else copies of the layers there sharing their bitmaps, with a
+  material (a blur or glass) shown live between the copies composited
+  under it and over it. Where only a snapshot shows what lies there
+  (video, Metal, a web view, a filter or blend mode, vibrancy, a second
+  material, a paragraph whose fill its layer does not hold, or a view's
+  backing store, which a copy shown on screen must not share), the picture
+  is one snapshot of the screen, neighboring text included. Where the
+  padding reaches past the box the run sits in (the paragraph where it
+  paints a fill or a background image, else the nearest ancestor that does
+  or that clips), it extends the box, so the lift keeps UIKit's footprint
+  and holds none of what lies outside the box, such as the page around a
+  card. A box of one color fills it, the box's material spreads over it,
+  the copies under the material reflect past the box's edges the way
+  reflect padding extends an image, what lies over the material stays
+  within the box, and a snapshot's edge pixels stretch, since a reflection
+  would mirror the run's words, which the snapshot holds. The padding
+  fades as UIKit returns the picture, so it lands as the screen shows it
+  then; UIKit leaves the picture in the window once it has returned it,
+  and the host takes it off the screen when the dismissal completes.
+  After a commit that navigated, the dismissal has no target: the node is
+  under the new screen, as Signal's is under the conversation.
+  After a press that stayed, the dismissal returns to the node.
 - **The commit** (`willPerformPreviewActionForMenuWith`): if the preview row
   is still the popover's, enabled and has a `press`, it is pressed by view
   id, synchronously, with the navigation stack's own push animation off for
@@ -1262,7 +1294,9 @@ the existing chord filing and Settings label remain unchanged. A declared
 Items retain the existing destination ordering: Edit keeps its standard
 replacement and paste-variant positions, Go its history before destinations;
 other commands follow declaration order. App items follow About;
-View, Window and Help items precede the host commands. Go appears while it
+View and Window items precede the host commands; Help items follow the
+menu's own (2026-11-04): AppKit leads Help with Send *App* Feedback to Apple
+and a separator, as in any Mac app, then Help ▸ *App* Help. Go appears while it
 has an item. Help remains `NSApp.helpMenu`, with AppKit's search field above
 the authored items (the field is outside `NSMenu.items`).
 
@@ -1352,7 +1386,10 @@ otherwise list; author over platform (LLP 1115).
 `develop` (the Develop menu of a development build), `paste-and-match-style`,
 `find`, `spelling-and-grammar`, `substitutions`, `transformations` (Edit's
 template items, LLP 1115 D8; a removed submenu's items are removed with it,
-and an app command that would stand in inside Find follows Select All), `app-help` (Help ▸ *App* Help; AppKit's search
+and an app command that would stand in inside Find follows Select All; with all
+four removed, Speech moves ahead of them, since AppKit places Writing Tools after
+Find, hidden or not, and Edit then reads Speech, Writing Tools, AutoFill as a
+menu built without them does, 2026-11-04), `app-help` (Help ▸ *App* Help; AppKit's search
 field stays), and `actual-size`, `zoom-in`, `zoom-out` below. The host finds
 its own submenus and Develop by item identifiers it sets, the rest by action,
 never by title. `develop` takes the menu off the bar and leaves its chords:
@@ -1369,18 +1406,38 @@ Electron's default menu does. AppKit sends ⌘= and ⇧⌘= to the ⌘+ item its
 (measured with posted HID events), so the ⌘+ item answers a keyboard's three;
 an event built without the layout's characters (the agent's) misses it, so a
 hidden ⌘= item answers that one. The steps are Safari's page zoom
-levels (50, 75, 85, 100, 115, 125, 150, 175, 200, 250, 300%); T3 Code's are
-Electron's half levels (1.2^0.5, about 110%), a difference of step only. The
+levels (50, 75, 85, 100, 115, 125, 150, 175, 200, 250, 300%). The
 zoom is the main window's session's (the key window's, or the window under a
-key panel, as AppKit sends a nil-targeted action), kept across a reload and not across a
-launch, and the runner applies it last: the root font size, the app's own
-`setRootFontSize` included, times the zoom (`Runner::set_root_font_zoom`,
-`exact_set_root_font_zoom`), as a browser's page zoom is over an author's
-`html { font-size }`. Declared deviation: a browser's zoom scales `px`
-lengths too; this one scales what follows the root size and leaves `px`
-and the platform's controls. The items are in every Mac app's View, as in
-Safari's and Electron's; an app that sizes in `px` alone removes them. An
-app's own ⌘0, ⌘= or ⌘- command stands in for the host's item, as Edit's do.
+key panel, as AppKit sends a nil-targeted action), kept across a reload and
+not across a launch. The items are in every Mac app's View, as in Safari's
+and Electron's. An app's own ⌘0, ⌘= or ⌘- command stands in for the host's
+item, as Edit's do, and sets its own steps with `setPageZoom(factor)`,
+Electron's `webContents.setZoomFactor` (T3 Code's are Electron's half
+levels, 1.2^0.5, about 110%).
+
+**It is a page zoom, as Chromium's** (2026-11-04, Daehyeon's ruling that
+View's zoom scale the whole page, as Electron's does). A CSS px is `factor`
+points: the viewport the page lays out in is the view's size over the factor,
+so media queries, `resize` and `env()` lengths see it, and `px`, `rem` and
+the platform's controls in the page all scale. The Mac host magnifies the
+page's scroll view (`NSScrollView.magnification`, clamped to Chrome's 25% to
+500%), and AppKit backs every view of the page at the window's backing scale
+times the factor. That is Chrome's device scale under a page zoom: Chrome 156
+at 125% on a 2x display reads `devicePixelRatio` 2.5 and `innerWidth` 800 in
+a 1000 px window, and rounds a 14 px `normal` line box to 16.4 px, 41 of
+those device pixels (`TextParityMacTests`). Text line boxes round to them (LLP 1008 §3), a hairline
+is one of them (LLP 1115.000 D10.3), and pictures, icons and masks are drawn
+at that scale. A dialog's backdrop and a popover's layer, which sit over the
+page rather than in its document, carry the zoom in their bounds. Not zoomed:
+the window's chrome (title bar, toolbar, menu bar and native menus, which are
+not the page), the panes the host composes beside the page from
+root tabs or a stack (LLP 1115.002 D3, D4), and a sheet in a window of its
+own. A region surface (LLP 1044) whose scale is then neither 1 nor 2 draws
+as ordinary paragraphs. Until they follow, iOS, Linux and Windows have no
+View zoom and refuse `setPageZoom` in the journal; the web refuses it too, as
+the browser's zoom is the person's. This replaces a zoom of the root font
+size alone (`exact_set_root_font_zoom`), which left `px` lengths and the
+viewport as they were.
 
 **Not built, because the platform already does it.** Standard items under a
 non-Latin input source: under Korean 2-Set a real ⌘ chord's `characters` is
