@@ -734,7 +734,9 @@ with the registry crates this machine has compiled
 (`~/.cache/exact/apple-crates`; Cargo decides which it can use). Delete either
 directory to compile everything here. What is
 distributed (`--archive`, `exact release`) is the whole-module build, stripped,
-with its dSYM and whole receipt beside it; a production build links its Rust
+with its dSYM and whole receipt beside it (an `--archive <name>.ipa` strips its
+frameworks too, their dSYMs in `<name>.dSYMs/<Framework>.framework.dSYM`, the
+layout of an Xcode archive's `dSYMs`); a production build links its Rust
 with fat LTO and, when its plan is fixed, leaves out the loaded modules the
 plan cannot reach (LLP 1036.000 §5–§10). `--bundle` prints the stable Mac bundle at
 `<target>/clients/<source-key>/<id>/macos/<Name>.app`; `scripts/exact.mjs`,
