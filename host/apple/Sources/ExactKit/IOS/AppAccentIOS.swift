@@ -64,7 +64,7 @@ final class AppAccent {
         if let ledger = Ledger.ledgers.object(forKey: window) {
             return ledger.held.last?.tint ?? ledger.own
         }
-        return (presenter.viewport as? RestsTint)?.restingTint ?? window.tintColor
+        return (presenter.viewport as? Viewport)?.restingTint ?? window.tintColor
     }
 
     /// The session ends: its window has its own tint back.

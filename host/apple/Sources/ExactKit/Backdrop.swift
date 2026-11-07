@@ -239,8 +239,8 @@ extension NodeView {
     /// the accent, which would tint every glass.
     var glassTint: [[Double]]? {
         guard Materials.glass(materialKind ?? materialRequest), wrote("tint_color"),
-              let light = undimmedChannels("tint_color", dark: false),
-              let dark = undimmedChannels("tint_color", dark: true) else { return nil }
+              let light = channels("tint_color", dark: false),
+              let dark = channels("tint_color", dark: true) else { return nil }
         return [light, dark]
     }
 
