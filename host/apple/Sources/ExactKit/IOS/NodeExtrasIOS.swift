@@ -162,6 +162,8 @@ final class NodeExtras {
     var retainedScrollTop: CGFloat?
     var materialKind: String?
     var materialInteractive: Bool = false
+    /// The glass's authored tint (light, dark) its effect was made with (`glassTint`).
+    var materialTint: [[Double]]?
     var hiddenBeforePlacement = false
     var placementHidden = false
     var materialView: UIVisualEffectView?
@@ -377,6 +379,7 @@ extension NodeView {
     var glassGroupView: GlassGroupView? { get { extras?.glassGroupView } set { if newValue != nil || extras != nil { more.glassGroupView = newValue } } }
     var glassSlot: GlassSlot? { get { extras?.glassSlot } set { if newValue != nil || extras != nil { more.glassSlot = newValue } } }
     var materialInteractive: Bool { get { extras?.materialInteractive ?? false } set { if newValue || extras != nil { more.materialInteractive = newValue } } }
+    var materialTint: [[Double]]? { get { extras?.materialTint } set { if newValue != nil || extras != nil { more.materialTint = newValue } } }
     var readingAnchors: [(node: NodeView, y: CGFloat)] {
         get { extras?.readingAnchors ?? [] }
         set { if !newValue.isEmpty || extras != nil { more.readingAnchors = newValue } }

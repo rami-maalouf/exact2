@@ -1090,9 +1090,10 @@ package final class NodeView: UIView, UITextViewDelegate, UITextFieldDelegate, U
         }
         guard let materialView else { rehomeMaterialChildren(); return }
         if cssVisibilityHidden { materialView.effect = nil }
-        else if materialView.effect == nil || materialInteractive != interactive || backdropStale {
+        else if materialView.effect == nil || materialInteractive != interactive || backdropStale || materialTint != glassTint {
             showMaterialEffect(backdropEffect() ?? materialEffect(kind ?? "ultra-thin", interactive: interactive))
             materialInteractive = interactive
+            materialTint = glassTint
         }
         applyMaterialRadius()
         rehomeMaterialChildren()

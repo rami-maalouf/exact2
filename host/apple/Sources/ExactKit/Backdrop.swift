@@ -235,6 +235,15 @@ extension NodeView {
         (materialView as? BackdropEffectView).map { $0.operations != backdropOperations } ?? false
     }
 
+    /// A glass node's authored `-exact-tint-color` (light, dark), nil when unsaid: an unset tint is
+    /// the accent, which would tint every glass.
+    var glassTint: [[Double]]? {
+        guard Materials.glass(materialKind ?? materialRequest), wrote("tint_color"),
+              let light = undimmedChannels("tint_color", dark: false),
+              let dark = undimmedChannels("tint_color", dark: true) else { return nil }
+        return [light, dark]
+    }
+
     /// The effect for material `kind` (LLP 1053.000 D4): a glass effect on
     /// iOS 26 (else ultra-thin), otherwise the table's blur style.
     func materialEffect(_ kind: String, interactive: Bool) -> UIVisualEffect {
@@ -243,6 +252,11 @@ extension NodeView {
             if #available(iOS 26.0, tvOS 26.0, *) {
                 let glass = UIGlassEffect(style: apple == "glass" ? .regular : .clear)
                 glass.isInteractive = interactive
+                // An authored `-exact-tint-color`: UIKit's tinted glass, as a prominent glass button's,
+                // here on a glass box that can join a glass group (a native button's glass is its own).
+                if let tint = glassTint {
+                    glass.tintColor = UIColor { TextEngine.color(tint[$0.userInterfaceStyle == .dark ? 1 : 0]) }
+                }
                 return glass
             }
             #if os(tvOS)
