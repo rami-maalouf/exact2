@@ -1,8 +1,11 @@
 import { test } from 'bun:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, writeFileSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { assertActivityRefusals } from './activities.mjs';
+import { resolveApp } from '../../scripts/app.mjs';
 import { appleComposition, assertCapabilityFrameworks, loadedDylibs } from './link.mjs';
 import { systemFrameworks } from './compose.mjs';
 
@@ -54,9 +57,48 @@ test('ordinary app executables refuse WidgetKit, ActivityKit and SwiftUI, includ
   } finally { rmSync(dir, {recursive:true,force:true}); }
 });
 
+test('activity refusals allow native APNs without activities and still scan every activity bundle binary', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'exact-activity-scope-'));
+  const plain = { manifest: {} }, empty = { manifest: { live_activities: [] } };
+  const activity = resolveApp('caltrain');
+  const runApple = (cmd, args) => {
+    const result = spawnSync(cmd, args, { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result;
+  };
+  const bytes = readFileSync('/bin/ls');
+  const directories = [dir, join(dir, 'PlugIns', 'Widget.appex'), join(dir, 'Frameworks', 'Arm.framework')];
+  try {
+    for (const directory of directories) {
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(directory, 'Info.plist'), JSON.stringify({ CFBundleExecutable: 'Binary' }));
+      writeFileSync(join(directory, 'Binary'), bytes);
+    }
+    const binaries = [...directories.map(directory => join(directory, 'Binary')), join(dir, 'Frameworks', 'Loose.dylib')];
+    writeFileSync(binaries.at(-1), bytes);
+    assert.equal(assertActivityRefusals(dir, runApple, activity), binaries.length);
+    for (const binary of binaries) {
+      for (const symbol of ['registerForRemoteNotifications', 'pushToStartTokenUpdates']) {
+        writeFileSync(binary, Buffer.concat([bytes, Buffer.from(`\0${symbol}\0`)]));
+        if (symbol === 'registerForRemoteNotifications') for (const app of [plain, empty]) {
+          assert.equal(assertActivityRefusals(dir, runApple, app), 0);
+        }
+        assert.throws(() => assertActivityRefusals(dir, runApple, activity), new RegExp(symbol));
+      }
+      writeFileSync(binary, bytes);
+    }
+    for (const directory of directories) {
+      const plist = join(directory, 'Info.plist');
+      writeFileSync(plist, JSON.stringify({ CFBundleExecutable: 'Binary', UIBackgroundModes: ['remote-notification'] }));
+      for (const app of [plain, empty]) assert.equal(assertActivityRefusals(dir, runApple, app), 0);
+      assert.throws(() => assertActivityRefusals(dir, runApple, activity), /remote-notification/);
+      writeFileSync(plist, JSON.stringify({ CFBundleExecutable: 'Binary' }));
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // The async iOS step supplies its just-built bundle. Glue has no assembled iOS fixture yet.
 test.skipIf(!process.env.EXACT_ACTIVITY_APP)('the assembled app and extension refuse push-to-start symbols, remote registration and its background mode (LLP 1126.001 WP9)', async () => {
-  const { assertActivityRefusals } = await import('./activities.mjs');
   const { cpSync, readFileSync, readdirSync } = await import('node:fs');
   const { spawnSync } = await import('node:child_process');
   const { resolve } = await import('node:path');
@@ -67,8 +109,8 @@ test.skipIf(!process.env.EXACT_ACTIVITY_APP)('the assembled app and extension re
     return result;
   };
   try {
-    const app = resolve(process.env.EXACT_ACTIVITY_APP);
-    assert.ok(assertActivityRefusals(app, runApple) >= 3, 'app, extension and ActivityKit arm are scanned');
+    const app = resolve(process.env.EXACT_ACTIVITY_APP), declaration = resolveApp('caltrain');
+    assert.ok(assertActivityRefusals(app, runApple, declaration) >= 3, 'app, extension and ActivityKit arm are scanned');
     cpSync(app, dir, { recursive: true });
     const extension = resolve(dir, 'PlugIns', readdirSync(resolve(dir, 'PlugIns')).find(n => n.endsWith('.appex')));
     for (const directory of [dir, extension]) {
@@ -76,11 +118,11 @@ test.skipIf(!process.env.EXACT_ACTIVITY_APP)('the assembled app and extension re
       const info = JSON.parse(runApple('plutil', ['-convert', 'json', '-o', '-', plist]).stdout);
       const binary = resolve(directory, info.CFBundleExecutable), bytes = readFileSync(binary);
       runApple('plutil', ['-replace', 'UIBackgroundModes', '-json', '["remote-notification"]', plist]);
-      assert.throws(() => assertActivityRefusals(dir, runApple), /remote-notification/);
+      assert.throws(() => assertActivityRefusals(dir, runApple, declaration), /remote-notification/);
       writeFileSync(plist, original);
       for (const symbol of ['pushToStartTokenUpdates', 'registerForRemoteNotifications']) {
         writeFileSync(binary, Buffer.concat([bytes, Buffer.from(`\0${symbol}\0`)]));
-        assert.throws(() => assertActivityRefusals(dir, runApple), new RegExp(symbol));
+        assert.throws(() => assertActivityRefusals(dir, runApple, declaration), new RegExp(symbol));
       }
       writeFileSync(binary, bytes);
     }

@@ -2,6 +2,7 @@
 import { resolve } from 'node:path';
 import { copyFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { wrapFramework } from './assets.mjs';
+import { activityEntries } from './widgets.mjs';
 export function packageActivityArm({ app, bundle, directory, triple, sdk, device, runApple }) {
   const binary = resolve(directory, 'libexact_activity.dylib');
   // The system identifies the attributes by their module and type name. Compile the
@@ -14,9 +15,10 @@ export function packageActivityArm({ app, bundle, directory, triple, sdk, device
   wrapFramework(frameworks, 'libexact_activity.dylib', 'ExactActivity', app, device ? 'iPhoneOS' : 'iPhoneSimulator');
 }
 
-/** The update-token ruling admits neither push-to-start nor ordinary remote notifications.
+/** The activity update-token ruling admits neither push-to-start nor ordinary remote notifications.
  * Run on archives and the async lane's built iOS app and extension. */
-export function assertActivityRefusals(bundle, runApple) {
+export function assertActivityRefusals(bundle, runApple, app) {
+  if (!activityEntries(app).length) return 0;
   const forbidden = ['pushToStartTokenUpdates', 'registerForRemoteNotifications'];
   const executables = [];
   const visit = directory => {
