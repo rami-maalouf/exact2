@@ -1,8 +1,7 @@
 # Recipe: a native module in Swift
 
-**Sound, MIDI and a transport are built in** ([guide](../contract-for-agents.md#sound-midi-and-media),
-`apps/metronome`): write no module. Another platform API with no view (a measurement
-hook) is the app's one module, which `app.ts` asks: `modules/apple/*.swift`, one `ExactModule` subclass that `let exactModule` names.
+**Sound and MIDI are built in** ([guide](../contract-for-agents.md#sound-midi-and-media),
+`apps/metronome`): write no module. Another platform API with no view (a hook) is the module `app.ts` asks: `modules/apple/*.swift`, one `ExactModule` subclass that `let exactModule` names.
 app.json needs nothing for it ([app-json](app-json.md)).
 
 ```swift
@@ -64,9 +63,8 @@ export const answer: Answer = (source, args, store, storage, native) =>
   under the agent.
 - **Launch arguments:** Exact passes none. `xcrun simctl launch <udid> <bundle id> -AutoPlay
   1` puts each `-Name value` in `UserDefaults`, as read above.
-- **Printing:** `print` shows in `agent ios logs` and `xcrun simctl launch --console`;
-  `NSLog` not. On macOS, `agent macos logs` includes `print` output too;
-  the host reserves a separate reply stream before app modules start.
+- **Printing:** `print` shows in `agent ios logs`, `agent macos logs` and
+  `xcrun simctl launch --console`; `NSLog` not.
 - **`app.onLine`** (app hatch) is watched from its first read: read it once, even when
   `isNew`, to hear changes.
 - **Exiting:** iOS has no quit. `exit(0)` skips the app's pending writes: keep it to a
