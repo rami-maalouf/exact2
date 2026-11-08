@@ -49,11 +49,17 @@ struct AgentMouseRelease {
 }
 
 extension Agent {
+    /// call before booting app modules; stdout then belongs to host logs.
+    public static func prepareStdio() {
+        out = AgentStdio.replies
+    }
+
     /// Read requests off stdin on a thread; answer each on the main thread,
     /// in order, before reading the next. Stdin closing ends the process.
     /// `sessions` are what a request's `session` label routes among; the
     /// first is the default.
     public static func startStdio(sessions: [(String, ExactSession)]) {
+        prepareStdio()
         // Sessions that joined before the carrier started (`route`) stay.
         routes = sessions + routes.filter { joined in !sessions.contains { $0.0 == joined.0 } }
         Thread { serve(fd: 0) }.start()

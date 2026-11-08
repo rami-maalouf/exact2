@@ -2,7 +2,7 @@
 import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -963,3 +963,24 @@ test('state marks a resource declaration unavailable when no compatible map exis
   assert.deepEqual(reply.resourceStatus.rows.declaration,
     { status: 'unavailable', reason: 'no compatible development source map' });
 });
+
+// compile the carrier itself in a child so its descriptor changes cannot affect the test runner.
+test('macOS reserves drive replies before module stdout, including JSON logs', () => {
+  if (process.platform !== 'darwin') return;
+  const dir = mkdtempSync(resolve(tmpdir(), 'exact-agent-stdio-'));
+  try {
+    writeFileSync(resolve(dir, 'main.swift'), String.raw`import Foundation
+let replies = AgentStdio.replies
+print("module startup")
+print("{\"module\":\"log\"}")
+fflush(stdout)
+replies.write(Data("{\"ok\":true}\n".utf8))
+`);
+    const built = spawnSync('xcrun', ['swiftc', 'host/apple/Sources/ExactKit/Mac/AgentStdio.swift', resolve(dir, 'main.swift'), '-o', resolve(dir, 'probe')], { encoding: 'utf8' });
+    assert.equal(built.status, 0, built.stderr);
+    const ran = spawnSync(resolve(dir, 'probe'), [], { encoding: 'utf8' });
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.equal(ran.stdout, '{"ok":true}\n');
+    assert.equal(ran.stderr, 'module startup\n{"module":"log"}\n');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}, 60_000);

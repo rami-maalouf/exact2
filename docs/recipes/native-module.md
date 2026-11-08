@@ -65,7 +65,8 @@ export const answer: Answer = (source, args, store, storage, native) =>
 - **Launch arguments:** Exact passes none. `xcrun simctl launch <udid> <bundle id> -AutoPlay
   1` puts each `-Name value` in `UserDefaults`, as read above.
 - **Printing:** `print` shows in `agent ios logs` and `xcrun simctl launch --console`;
-  `NSLog` not.
+  `NSLog` not. On macOS, `agent macos logs` includes `print` output too;
+  the host reserves a separate reply stream before app modules start.
 - **`app.onLine`** (app hatch) is watched from its first read: read it once, even when
   `isNew`, to hear changes.
 - **Exiting:** iOS has no quit. `exit(0)` skips the app's pending writes: keep it to a

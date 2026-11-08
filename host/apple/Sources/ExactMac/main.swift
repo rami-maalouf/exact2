@@ -30,6 +30,7 @@ let smoke = ExactEnv.smoke
 let agentMode = ExactEnv.agentMode
 let agentReadable = agentMode || ExactEnv.environment["EXACT_AGENT"] == "live"
 setvbuf(stdout, nil, _IOLBF, 0)
+if agentReadable { Agent.prepareStdio() }
 // Nothing restores this app: a session boots its plan, and the window below is
 // not restorable. AppKit still saves the application's own state some fifteen
 // seconds after launch, and to do that it asks the window server for the order
