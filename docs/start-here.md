@@ -53,8 +53,14 @@ which it took. Your shell commands have no such help, so keep one directory.
 |`contract build app.contract --json --errors-only`|A CI gate: `[]` and exit zero mean no errors (omit `--errors-only` to include warnings); it rewrites the types `app.ts` imports and type-checks it.|
 |`verify`, `verify ios`|Builds, runs `app.test.contract` and each other `*.test.contract` beside it, `check`s the first screen and where each test ends (light, dark, two widths), relaunches once on real time, and reads those screens (on the web, also the ones the tests pass through) at the largest text size, where what spills is the app's layout to fix, with a remedy that keeps the text's size (no `line-clamp` in a list's row; `hyphens="auto"` only on a text of one word, which a UILabel breaks between syllables when it is longer than its line); `verify ios` also plays real touches on a long list on the first screen, once per build, and says `scrolling: like UIKit` or what a person would notice, each with UIKit's value and its cause, counting only what the app can fix: one report. A clean run on the app's platform is done.|
 |`agent web --storage s1 "clock data" "tap add" "check both"`|Drives the app by hand, to see why something fails; `--keep-storage` reopens saved data.|
-|`web`, `ios --run`, `windows --run`|For a person watching: its URL, rebuilds on save; a simulator; a window (from SSH, on the signed-in desktop).|
+|`web`, `ios --run`, `mac --run`, `windows --run`|For a person watching: its URL, rebuilds on save; a simulator; a Mac window; a Windows window (from SSH, on the signed-in desktop).|
 |`share`|For a person to try an iPhone app on their own phone: prints an AppDrop link that installs it. Run it when the app is ready for them, and again after each change they should see; send the link it prints.|
+
+On macOS, `bun exact.mjs mac --run` builds and opens the app. Drive it with
+`bun exact.mjs agent macos "clock data" "tree"`, and run its authored tests with
+`bun exact.mjs test macos`. Both commands build first. The build verb is `mac`;
+the drive and test platform is `macos` (also `mac`). `verify macos` is not supported:
+use `test macos`, then capture and inspect the Mac window with `agent macos`.
 
 `verify`, `test` and `agent` compile, build and serve their own copy, saying a compile error as `contract build` does: no `contract build` before them, no dev server. `test linux` and `agent linux` do not build: run `bun exact.mjs linux` first and after each edit; nor do `test android` and `agent android`, which drive the APK `bun exact.mjs android` builds and installs on the device `ANDROID_SERIAL` names (`verify android` builds it). Run `verify` when the features work; `verify ios` or `verify android` once at the end for a phone app. On Windows, `test windows`,
 `agent windows` and `verify windows` build first and drive headless at `app.json`'s `host.windows.window` size, in

@@ -5,6 +5,14 @@ and fast. The merge-blocking checks must run in under 65 seconds
 (`rules/RULES.md`). The async lane runs everything else for every commit, so
 its time counts too.
 
+## Testing an app on macOS
+
+From the app directory, `bun exact.mjs test macos` builds and runs its authored
+`*.test.contract` tests. `bun exact.mjs agent macos "clock data" "tree"` builds
+and drives the Mac host; add `"screenshot .exact/mac.png"` to capture it.
+`bun exact.mjs mac --run` opens the app for manual checks. `verify macos` is not
+supported; passing authored tests does not cover its visual or property checks.
+
 ## Principles
 
 - **Tests MUST be reliable.** Prioritize reliability over speed, although both
